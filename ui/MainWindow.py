@@ -18,11 +18,20 @@ from utils.QRCodeUtils import QRCodeUtils
 class MainWindow(ctk.CTk):
     """主窗口类"""
 
-    def __init__(self):
+    def __init__(self, base_dir=None):
         super().__init__()
 
+        # 基础目录（兼容 PyInstaller 打包）
+        if base_dir is None:
+            import sys
+            if getattr(sys, 'frozen', False):
+                base_dir = Path(sys.executable).parent
+            else:
+                base_dir = Path(__file__).parent.parent
+        self.base_dir = Path(base_dir)
+
         # 配置
-        self.config = Config("./config.json")
+        self.config = Config(str(self.base_dir / "config.json"), base_dir=self.base_dir)
 
         # OCR 引擎
         self.ocr_engine = None

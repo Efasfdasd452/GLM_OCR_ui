@@ -15,7 +15,7 @@
   "batch": {
     "enabled": false,
     "recursive": false,
-    "output_dir": "C:/Users/ASUS/Pictures/Screenshots/硬盘加密性能",
+    "output_dir": "./output",
     "filename_format": "[OCR]_{name}_{date}",
     "date_format": "%Y%m%d_%H%M%S"
   },
