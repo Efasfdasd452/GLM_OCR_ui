@@ -6,6 +6,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from pathlib import Path
 import threading
+import io
 
 from core.Config import Config
 from core.OCREngine import OCREngine
@@ -201,6 +202,10 @@ class MainWindow(ctk.CTk):
         self.tab_batch = self.tabview.add("批量OCR")
         self.create_batch_tab()
 
+        # 二维码生成标签页
+        self.tab_qrgen = self.tabview.add("二维码生成")
+        self.create_qrgen_tab()
+
         # 日志标签页
         self.tab_log = self.tabview.add("日志")
         self.create_log_tab()
@@ -301,6 +306,99 @@ class MainWindow(ctk.CTk):
 
         # 批量文件列表
         self.batch_files = []
+
+    def create_qrgen_tab(self):
+        """创建二维码生成标签页"""
+        self.tab_qrgen.grid_columnconfigure(0, weight=1)
+        self.tab_qrgen.grid_columnconfigure(1, weight=0)
+        self.tab_qrgen.grid_rowconfigure(1, weight=1)
+
+        # 输入区
+        input_frame = ctk.CTkFrame(self.tab_qrgen)
+        input_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+        input_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(input_frame, text="输入内容:").grid(row=0, column=0, padx=(10, 5), pady=10)
+
+        self.qrgen_entry = ctk.CTkEntry(input_frame, placeholder_text="输入文本或链接...")
+        self.qrgen_entry.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        self.qrgen_entry.bind("<Return>", lambda e: self.generate_qrcode())
+
+        self.btn_generate_qr = ctk.CTkButton(
+            input_frame,
+            text="生成二维码",
+            command=self.generate_qrcode,
+            width=120
+        )
+        self.btn_generate_qr.grid(row=0, column=2, padx=(5, 10), pady=10)
+
+        self.btn_save_qr = ctk.CTkButton(
+            input_frame,
+            text="保存图片",
+            command=self.save_qrcode,
+            width=100
+        )
+        self.btn_save_qr.grid(row=0, column=3, padx=(5, 10), pady=10)
+
+        # 二维码预览区
+        self.qr_preview_label = ctk.CTkLabel(
+            self.tab_qrgen,
+            text="二维码将显示在此处",
+            width=400,
+            height=400,
+            fg_color="gray85"
+        )
+        self.qr_preview_label.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10))
+
+        # 保存生成的二维码 PIL Image
+        self._qr_image = None
+
+    def generate_qrcode(self):
+        """根据输入文本生成二维码"""
+        text = self.qrgen_entry.get().strip()
+        if not text:
+            messagebox.showwarning("警告", "请输入要生成二维码的内容")
+            return
+
+        try:
+            import qrcode
+            from PIL import ImageTk
+
+            qr = qrcode.QRCode(box_size=10, border=4)
+            qr.add_data(text)
+            qr.make(fit=True)
+            self._qr_image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+
+            # 缩放到预览尺寸
+            preview = self._qr_image.copy()
+            preview.thumbnail((380, 380))
+
+            tk_image = ImageTk.PhotoImage(preview)
+            self.qr_preview_label.configure(image=tk_image, text="")
+            self.qr_preview_label._tk_image = tk_image  # 防止被 GC 回收
+
+            self.log(f"✓ 二维码已生成: {text[:50]}{'...' if len(text) > 50 else ''}")
+        except ImportError:
+            messagebox.showerror("错误", "请安装 qrcode 库: pip install qrcode")
+        except Exception as e:
+            self.log(f"✗ 二维码生成失败: {e}")
+            messagebox.showerror("错误", f"生成失败: {e}")
+
+    def save_qrcode(self):
+        """保存生成的二维码图片"""
+        if self._qr_image is None:
+            messagebox.showwarning("警告", "请先生成二维码")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="保存二维码",
+            defaultextension=".png",
+            filetypes=[("PNG 图片", "*.png"), ("JPEG 图片", "*.jpg")]
+        )
+
+        if file_path:
+            self._qr_image.save(file_path)
+            self.log(f"✓ 二维码已保存: {file_path}")
 
     def create_log_tab(self):
         """创建日志标签页"""
