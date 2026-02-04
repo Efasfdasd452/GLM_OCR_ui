@@ -2,10 +2,10 @@
   "model": {
     "name": "zai-org/GLM-OCR",
     "local_path": "./models/GLM-OCR",
-    "use_local_only": true,
     "device": "auto",
     "torch_dtype": "float16",
-    "max_new_tokens": 2048
+    "max_new_tokens": 2048,
+    "use_local_only": true
   },
   "ocr": {
     "language": "简体中文",
@@ -15,7 +15,7 @@
   "batch": {
     "enabled": false,
     "recursive": false,
-    "output_dir": "./output",
+    "output_dir": "C:/Users/ASUS/Pictures/Screenshots/硬盘加密性能",
     "filename_format": "[OCR]_{name}_{date}",
     "date_format": "%Y%m%d_%H%M%S"
   },

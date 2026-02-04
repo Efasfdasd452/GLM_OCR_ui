@@ -738,9 +738,49 @@ class MainWindow(ctk.CTk):
         self.log(f"切换识别类型: {value}")
 
     def open_settings(self):
-        """打开设置"""
-        # TODO: 创建设置窗口
-        messagebox.showinfo("提示", "设置功能待实现")
+        """打开设置窗口"""
+        settings_win = ctk.CTkToplevel(self)
+        settings_win.title("设置")
+        settings_win.geometry("500x200")
+        settings_win.resizable(False, False)
+        settings_win.grab_set()
+
+        # 居中显示
+        settings_win.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 500) // 2
+        y = self.winfo_y() + (self.winfo_height() - 200) // 2
+        settings_win.geometry(f"+{x}+{y}")
+
+        # 输出目录设置
+        ctk.CTkLabel(settings_win, text="输出目录:", font=ctk.CTkFont(size=14)).grid(
+            row=0, column=0, padx=(20, 10), pady=(30, 10), sticky="w"
+        )
+
+        output_dir_var = ctk.StringVar(value=self.config.get("batch.output_dir", "./output"))
+        output_dir_entry = ctk.CTkEntry(settings_win, textvariable=output_dir_var, width=280)
+        output_dir_entry.grid(row=0, column=1, padx=5, pady=(30, 10))
+
+        def browse_output_dir():
+            folder = filedialog.askdirectory(title="选择输出目录", parent=settings_win)
+            if folder:
+                output_dir_var.set(folder)
+
+        ctk.CTkButton(settings_win, text="浏览", command=browse_output_dir, width=80).grid(
+            row=0, column=2, padx=(5, 20), pady=(30, 10)
+        )
+
+        def save_settings():
+            new_dir = output_dir_var.get().strip()
+            if not new_dir:
+                new_dir = "./output"
+            self.config.set("batch.output_dir", new_dir)
+            self.config.save_config()
+            self.log(f"输出目录已设置为: {new_dir}")
+            messagebox.showinfo("提示", f"设置已保存!\n输出目录: {new_dir}", parent=settings_win)
+
+        ctk.CTkButton(settings_win, text="保存设置", command=save_settings, width=120, fg_color="green").grid(
+            row=1, column=0, columnspan=3, pady=(20, 10)
+        )
 
     def log(self, message: str):
         """添加日志"""
