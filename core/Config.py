@@ -18,7 +18,7 @@ class Config:
             "local_path": None,  # 本地模型路径，优先级高于 name
             "device": "auto",
             "torch_dtype": "auto",
-            "max_new_tokens": 8192
+            "max_new_tokens": 2048
         },
         "ocr": {
             "language": "简体中文",

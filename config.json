@@ -4,8 +4,8 @@
     "local_path": "./models/GLM-OCR",
     "use_local_only": true,
     "device": "auto",
-    "torch_dtype": "auto",
-    "max_new_tokens": 8192
+    "torch_dtype": "float16",
+    "max_new_tokens": 2048
   },
   "ocr": {
     "language": "简体中文",

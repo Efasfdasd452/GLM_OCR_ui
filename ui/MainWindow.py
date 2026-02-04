@@ -218,6 +218,7 @@ class MainWindow(ctk.CTk):
         # 图片预览区
         self.image_frame = ctk.CTkFrame(self.tab_single)
         self.image_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        self.image_frame.grid_columnconfigure(0, weight=1)
 
         self.image_label = ctk.CTkLabel(
             self.image_frame,
@@ -498,6 +499,7 @@ class MainWindow(ctk.CTk):
             return
 
         self.log("✓ 成功获取剪贴板图片，开始识别...")
+        self.show_image_preview(image)
         self.recognize_image(image)
 
     def batch_ocr(self):
@@ -516,6 +518,23 @@ class MainWindow(ctk.CTk):
         else:
             self.select_image()
 
+    def show_image_preview(self, image):
+        """在预览区显示图片"""
+        from PIL import Image, ImageTk
+
+        if isinstance(image, (str, Path)):
+            pil_image = Image.open(str(image))
+        else:
+            pil_image = image
+
+        # 缩放到预览区大小，保持比例
+        preview = pil_image.copy()
+        preview.thumbnail((600, 200))
+
+        tk_image = ImageTk.PhotoImage(preview)
+        self.image_label.configure(image=tk_image, text="")
+        self.image_label._tk_image = tk_image  # 防止 GC 回收
+
     def select_image(self):
         """选择图片"""
         file_path = filedialog.askopenfilename(
@@ -528,6 +547,7 @@ class MainWindow(ctk.CTk):
 
         if file_path:
             self.log(f"选择文件: {file_path}")
+            self.show_image_preview(file_path)
             self.recognize_image(file_path)
 
     def recognize_image(self, image):

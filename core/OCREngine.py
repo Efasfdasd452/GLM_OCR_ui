@@ -60,7 +60,7 @@ class OCREngine:
             # 关键：添加 trust_remote_code=True 和 local_files_only
             self.model = AutoModelForImageTextToText.from_pretrained(
                 pretrained_model_name_or_path=self.model_path,
-                torch_dtype="auto",
+                torch_dtype=torch.float16,
                 device_map=self.device,
                 trust_remote_code=True,  # 必须添加这个
                 local_files_only=self.use_local_only  # 强制仅使用本地文件
@@ -159,14 +159,21 @@ class OCREngine:
 
             inputs.pop("token_type_ids", None)
 
-            # 生成结果
-            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
+            # 关闭梯度计算，减少显存占用
+            with torch.inference_mode():
+                generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
 
             # 解码输出
+            input_len = inputs["input_ids"].shape[1]
             output_text = self.processor.decode(
-                generated_ids[0][inputs["input_ids"].shape[1]:],
+                generated_ids[0][input_len:],
                 skip_special_tokens=False
             )
+
+            # 释放中间张量
+            del inputs, generated_ids
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # 清理临时文件
             if isinstance(image, Image.Image):
