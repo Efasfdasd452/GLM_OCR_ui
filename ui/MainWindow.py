@@ -11,6 +11,7 @@ from core.Config import Config
 from core.OCREngine import OCREngine
 from utils.FileUtils import FileUtils
 from utils.ClipboardUtils import ClipboardUtils
+from utils.QRCodeUtils import QRCodeUtils
 
 
 class MainWindow(ctk.CTk):
@@ -165,7 +166,7 @@ class MainWindow(ctk.CTk):
 
         self.prompt_type = ctk.CTkOptionMenu(
             self.control_frame,
-            values=["文本识别", "文档解析", "表格识别", "公式识别"],
+            values=["文本识别", "文档解析", "表格识别", "公式识别", "二维码识别"],
             command=self.on_prompt_change
         )
         self.prompt_type.grid(row=0, column=1, padx=5, pady=10, sticky="w")
@@ -433,35 +434,69 @@ class MainWindow(ctk.CTk):
 
     def recognize_image(self, image):
         """识别图片"""
-        if not self.model_loaded:
+        is_qrcode_mode = self.prompt_type.get() == "二维码识别"
+
+        if not is_qrcode_mode and not self.model_loaded:
             messagebox.showwarning("警告", "请先加载模型")
             return
 
         def recognize_thread():
             self.log("开始识别...")
+            output_parts = []
 
-            prompt_map = {
-                "文本识别": "Text Recognition:",
-                "文档解析": "Document Parsing:",
-                "表格识别": "Table Recognition:",
-                "公式识别": "Formula Recognition:"
-            }
+            if is_qrcode_mode:
+                # 二维码识别模式
+                self.log("正在扫描二维码...")
+                qr_results = QRCodeUtils.decode_qrcodes(image)
+                qr_text = QRCodeUtils.format_results(qr_results)
 
-            prompt = prompt_map.get(self.prompt_type.get(), "Text Recognition:")
+                if qr_text:
+                    output_parts.append(qr_text)
+                    self.log(f"✓ 检测到 {len(qr_results)} 个二维码")
 
-            result = self.ocr_engine.recognize_image(
-                image,
-                prompt=prompt,
-                max_new_tokens=self.config.get("model.max_new_tokens")
-            )
+                # 如果模型已加载，同时进行 OCR 识别（处理混合图片）
+                if self.model_loaded:
+                    self.log("正在 OCR 识别文字...")
+                    ocr_result = self.ocr_engine.recognize_image(
+                        image,
+                        prompt="Text Recognition:",
+                        max_new_tokens=self.config.get("model.max_new_tokens")
+                    )
+                    if ocr_result and ocr_result.strip():
+                        output_parts.append(f"[文字识别结果]\n{ocr_result}")
+                        self.log("✓ 文字识别完成")
 
-            if result:
-                self.result_text.delete("1.0", "end")
-                self.result_text.insert("1.0", result)
-                self.log("✓ 识别完成")
+                if output_parts:
+                    self.result_text.delete("1.0", "end")
+                    self.result_text.insert("1.0", "\n\n".join(output_parts))
+                    self.log("✓ 识别完成")
+                else:
+                    self.log("✗ 未检测到二维码或文字")
+                    messagebox.showinfo("提示", "未检测到二维码")
             else:
-                self.log("✗ 识别失败")
-                messagebox.showerror("错误", "识别失败")
+                # 常规 OCR 模式
+                prompt_map = {
+                    "文本识别": "Text Recognition:",
+                    "文档解析": "Document Parsing:",
+                    "表格识别": "Table Recognition:",
+                    "公式识别": "Formula Recognition:"
+                }
+
+                prompt = prompt_map.get(self.prompt_type.get(), "Text Recognition:")
+
+                result = self.ocr_engine.recognize_image(
+                    image,
+                    prompt=prompt,
+                    max_new_tokens=self.config.get("model.max_new_tokens")
+                )
+
+                if result:
+                    self.result_text.delete("1.0", "end")
+                    self.result_text.insert("1.0", result)
+                    self.log("✓ 识别完成")
+                else:
+                    self.log("✗ 识别失败")
+                    messagebox.showerror("错误", "识别失败")
 
         threading.Thread(target=recognize_thread, daemon=True).start()
 
