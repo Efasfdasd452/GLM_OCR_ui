@@ -115,15 +115,23 @@ class Config:
 
     def __init__(self, config_path: str = None, base_dir: Path = None):
         """初始化配置"""
+        import sys
+        self.is_frozen = getattr(sys, 'frozen', False)
+
         # 基础目录（兼容 PyInstaller 打包）
         if base_dir is None:
-            import sys
-            if getattr(sys, 'frozen', False):
+            if self.is_frozen:
                 self.base_dir = Path(sys.executable).parent
             else:
                 self.base_dir = Path(__file__).parent.parent
         else:
             self.base_dir = Path(base_dir)
+
+        # PyInstaller 内部资源目录（_internal/）
+        if self.is_frozen:
+            self.internal_dir = Path(sys._MEIPASS)
+        else:
+            self.internal_dir = self.base_dir
 
         if config_path is None:
             config_path = self.base_dir / "config.json"
@@ -151,10 +159,10 @@ class Config:
                 print(f"✓ 使用配置的本地模型: {local_path}")
                 return
 
-        # 检测程序同目录
+        # 检测模型目录
         local_model_paths = [
-            self.base_dir / "models" / "GLM-OCR",  # 程序目录/models/GLM-OCR
-            self.base_dir.parent / "models" / "GLM-OCR",  # 上级目录/models/GLM-OCR
+            self.internal_dir / "models" / "GLM-OCR",  # PyInstaller: _internal/models/GLM-OCR; 开发: 项目根/models/GLM-OCR
+            self.base_dir / "models" / "GLM-OCR",      # EXE同级/models/GLM-OCR（用户手动放置）
         ]
 
         for path in local_model_paths:
