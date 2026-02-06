@@ -1,0 +1,18 @@
+# UI 框架
+customtkinter>=5.2.0
+Pillow>=10.0.0
+
+# OCR 核心
+torch>=2.0.0
+transformers>=4.40.0
+accelerate>=0.20.0
+
+# 工具库
+pyperclip>=1.8.0
+pyzbar>=0.1.9  # 二维码识别
+qrcode>=7.0  # 二维码生成
+# pywin32>=306  # Windows only - 用于剪贴板图片支持
+
+# 可选依赖
+# pyscreenshot>=3.1  # 截图功能
+# mss>=9.0.0  # 更快的截图

@@ -1,0 +1,27 @@
+{
+  "model": {
+    "name": "zai-org/GLM-OCR",
+    "local_path": "./models/GLM-OCR",
+    "device": "auto",
+    "torch_dtype": "float16",
+    "max_new_tokens": 2048,
+    "use_local_only": true
+  },
+  "ocr": {
+    "language": "简体中文",
+    "prompt_type": "text_recognition",
+    "output_format": "txt"
+  },
+  "batch": {
+    "enabled": false,
+    "recursive": false,
+    "output_dir": "./output",
+    "filename_format": "[OCR]_{name}_{date}",
+    "date_format": "%Y%m%d_%H%M%S"
+  },
+  "ui": {
+    "theme": "light",
+    "font_size": 12,
+    "window_size": "1200x800"
+  }
+}

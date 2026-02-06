@@ -1,0 +1,12 @@
+/models/
+/GLM-OCR-Portable/
+/GLM-OCR.spec
+/test_image.png
+/dist
+/build
+/.idea/
+/.venv/
+__pycache__/
+/.claude/
+/output/
+GLM-OCR.spec
