@@ -1,7 +1,7 @@
 # GLM-OCR
 
 基于 [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) 模型的本地图像文字识别工具，提供现代化的图形用户界面。
-
+如果需要弄打包版，则需要下载源代码和模型(./models)以后，执行exe.py打包
 ## 功能特性
 
 - **多种识别模式**
