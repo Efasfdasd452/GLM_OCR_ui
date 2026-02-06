@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 import os
 os.environ["TORCH_DISABLE_TORCH_NP"] = "1"
-
+# ok
 
 # 判断是否为 PyInstaller 打包环境
 if getattr(sys, 'frozen', False):
