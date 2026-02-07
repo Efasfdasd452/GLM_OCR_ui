@@ -37,6 +37,9 @@ class MainWindow(ctk.CTk):
         self.ocr_engine = None
         self.model_loaded = False
 
+        # 动态 Token 设置
+        self.current_tokens = self.config.get("model.max_new_tokens", 2048)
+
         # UI 初始化
         self.setup_window()
         self.create_widgets()
@@ -181,6 +184,36 @@ class MainWindow(ctk.CTk):
         )
         self.prompt_type.grid(row=0, column=1, padx=5, pady=10, sticky="w")
 
+        # Token 调整控件
+        # Token 标签
+        self.token_label = ctk.CTkLabel(self.control_frame, text="Token数:")
+        self.token_label.grid(row=0, column=2, padx=(20, 5), pady=10)
+
+        # Token 滑块
+        max_limit = self.config.get("model.max_new_tokens_limit", 8192)
+        self.token_slider = ctk.CTkSlider(
+            self.control_frame,
+            from_=512,
+            to=max_limit,
+            number_of_steps=None,
+            width=200,
+            command=self.on_token_change
+        )
+        self.token_slider.set(self.current_tokens)
+        self.token_slider.grid(row=0, column=3, padx=5, pady=10)
+
+        # Token 数值显示/输入框
+        self.token_value_var = ctk.StringVar(value=str(self.current_tokens))
+        self.token_entry = ctk.CTkEntry(
+            self.control_frame,
+            textvariable=self.token_value_var,
+            width=80,
+            justify="center"
+        )
+        self.token_entry.grid(row=0, column=4, padx=5, pady=10)
+        self.token_entry.bind("<Return>", self.on_token_entry_change)
+        self.token_entry.bind("<FocusOut>", self.on_token_entry_change)
+
         # 快速操作按钮
         self.btn_quick_ocr = ctk.CTkButton(
             self.control_frame,
@@ -188,7 +221,7 @@ class MainWindow(ctk.CTk):
             command=self.quick_ocr,
             width=150
         )
-        self.btn_quick_ocr.grid(row=0, column=2, padx=5, pady=10)
+        self.btn_quick_ocr.grid(row=0, column=5, padx=5, pady=10)
 
         self.btn_copy_result = ctk.CTkButton(
             self.control_frame,
@@ -196,7 +229,7 @@ class MainWindow(ctk.CTk):
             command=self.copy_result,
             width=100
         )
-        self.btn_copy_result.grid(row=0, column=3, padx=5, pady=10)
+        self.btn_copy_result.grid(row=0, column=6, padx=5, pady=10)
 
     def create_tabs(self):
         """创建选项卡"""
@@ -590,7 +623,7 @@ class MainWindow(ctk.CTk):
                     ocr_result = self.ocr_engine.recognize_image(
                         image,
                         prompt="Text Recognition:",
-                        max_new_tokens=self.config.get("model.max_new_tokens")
+                        max_new_tokens=self.current_tokens
                     )
                     if ocr_result and ocr_result.strip():
                         output_parts.append(f"[文字识别结果]\n{ocr_result}")
@@ -617,7 +650,7 @@ class MainWindow(ctk.CTk):
                 result = self.ocr_engine.recognize_image(
                     image,
                     prompt=prompt,
-                    max_new_tokens=self.config.get("model.max_new_tokens")
+                    max_new_tokens=self.current_tokens
                 )
 
                 if result:
@@ -716,7 +749,7 @@ class MainWindow(ctk.CTk):
                 self.batch_files,
                 prompt=prompt,
                 progress_callback=progress_callback,
-                max_new_tokens=self.config.get("model.max_new_tokens")
+                max_new_tokens=self.current_tokens
             )
 
             # 保存结果
@@ -749,18 +782,65 @@ class MainWindow(ctk.CTk):
         """提示词类型变化"""
         self.log(f"切换识别类型: {value}")
 
+    def on_token_change(self, value):
+        """Token 滑块值变化回调"""
+        # 滑块返回浮点数，转为整数
+        token_value = int(value)
+
+        # 更新当前值
+        self.current_tokens = token_value
+
+        # 同步更新输入框显示
+        self.token_value_var.set(str(token_value))
+
+        # 记录日志
+        self.log(f"Token 值调整为: {token_value}")
+
+    def on_token_entry_change(self, event=None):
+        """Token 输入框值变化回调"""
+        try:
+            # 获取用户输入
+            input_value = self.token_value_var.get().strip()
+            token_value = int(input_value)
+
+            # 获取限制值
+            min_tokens = 512
+            max_tokens = self.config.get("model.max_new_tokens_limit", 8192)
+
+            # 范围验证
+            if token_value < min_tokens:
+                token_value = min_tokens
+                messagebox.showwarning("警告", f"Token 值不能小于 {min_tokens}，已自动调整")
+            elif token_value > max_tokens:
+                token_value = max_tokens
+                messagebox.showwarning("警告", f"Token 值不能超过 {max_tokens}，已自动调整")
+
+            # 更新值
+            self.current_tokens = token_value
+            self.token_value_var.set(str(token_value))
+
+            # 同步滑块
+            self.token_slider.set(token_value)
+
+            self.log(f"Token 值设置为: {token_value}")
+
+        except ValueError:
+            # 输入非数字，恢复为上次有效值
+            self.token_value_var.set(str(self.current_tokens))
+            messagebox.showerror("错误", "请输入有效的数字")
+
     def open_settings(self):
         """打开设置窗口"""
         settings_win = ctk.CTkToplevel(self)
         settings_win.title("设置")
-        settings_win.geometry("500x200")
+        settings_win.geometry("500x300")
         settings_win.resizable(False, False)
         settings_win.grab_set()
 
         # 居中显示
         settings_win.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - 500) // 2
-        y = self.winfo_y() + (self.winfo_height() - 200) // 2
+        y = self.winfo_y() + (self.winfo_height() - 300) // 2
         settings_win.geometry(f"+{x}+{y}")
 
         # 输出目录设置
@@ -781,17 +861,67 @@ class MainWindow(ctk.CTk):
             row=0, column=2, padx=(5, 20), pady=(30, 10)
         )
 
+        # 最大 Token 限制设置
+        ctk.CTkLabel(settings_win, text="最大 Token 限制:", font=ctk.CTkFont(size=14)).grid(
+            row=1, column=0, padx=(20, 10), pady=10, sticky="w"
+        )
+
+        max_tokens_var = ctk.IntVar(
+            value=self.config.get("model.max_new_tokens_limit", 8192)
+        )
+        max_tokens_entry = ctk.CTkEntry(
+            settings_win,
+            textvariable=max_tokens_var,
+            width=150
+        )
+        max_tokens_entry.grid(row=1, column=1, padx=5, pady=10, sticky="w")
+
+        ctk.CTkLabel(
+            settings_win,
+            text="(512-32768，建议 8192)",
+            font=ctk.CTkFont(size=11),
+            text_color="gray"
+        ).grid(row=1, column=2, padx=5, pady=10, sticky="w")
+
         def save_settings():
             new_dir = output_dir_var.get().strip()
             if not new_dir:
                 new_dir = "./output"
             self.config.set("batch.output_dir", new_dir)
+
+            # 保存最大 token 限制
+            try:
+                new_max_tokens = max_tokens_var.get()
+                if new_max_tokens < 512:
+                    new_max_tokens = 512
+                elif new_max_tokens > 32768:
+                    new_max_tokens = 32768
+
+                self.config.set("model.max_new_tokens_limit", new_max_tokens)
+
+                # 更新滑块最大值
+                self.token_slider.configure(to=new_max_tokens)
+
+                # 如果当前值超过新限制，自动调整
+                if self.current_tokens > new_max_tokens:
+                    self.current_tokens = new_max_tokens
+                    self.token_slider.set(new_max_tokens)
+                    self.token_value_var.set(str(new_max_tokens))
+            except Exception as e:
+                messagebox.showerror("错误", f"Token 限制设置无效: {e}", parent=settings_win)
+                return
+
             self.config.save_config()
             self.log(f"输出目录已设置为: {new_dir}")
-            messagebox.showinfo("提示", f"设置已保存!\n输出目录: {new_dir}", parent=settings_win)
+            self.log(f"最大 Token 限制已设置为: {new_max_tokens}")
+            messagebox.showinfo(
+                "提示",
+                f"设置已保存!\n输出目录: {new_dir}\n最大 Token: {new_max_tokens}",
+                parent=settings_win
+            )
 
         ctk.CTkButton(settings_win, text="保存设置", command=save_settings, width=120, fg_color="green").grid(
-            row=1, column=0, columnspan=3, pady=(20, 10)
+            row=2, column=0, columnspan=3, pady=(20, 10)
         )
 
     def log(self, message: str):

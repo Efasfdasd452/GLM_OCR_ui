@@ -18,6 +18,7 @@ class Config:
     "device": "auto",
     "torch_dtype": "float16",
     "max_new_tokens": 2048,
+    "max_new_tokens_limit": 8192,
     "use_local_only": True,
     "quantization": "none"
   },
