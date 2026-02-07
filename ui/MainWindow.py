@@ -527,7 +527,8 @@ class MainWindow(ctk.CTk):
     def screenshot_ocr(self):
         """截图OCR"""
         self.log("截图功能待实现...")
-        messagebox.showinfo("提示", "截图功能需要安装额外的截图库")
+        messagebox.showinfo("提示", "截图功能暂时没有实现，"
+                                    "按下windows键(就是左下角那四个方块的按键)+shift(左下角z左边那个长点的键)+s(不用大写)截图")
 
     def clipboard_ocr(self):
         """剪贴板OCR"""
