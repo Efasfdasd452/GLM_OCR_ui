@@ -18,7 +18,8 @@ class Config:
     "device": "auto",
     "torch_dtype": "float16",
     "max_new_tokens": 2048,
-    "use_local_only": True
+    "use_local_only": True,
+    "quantization": "none"
   },
   "ocr": {
     "language": "简体中文",
@@ -71,6 +72,12 @@ class Config:
     use_local_only  是否仅使用本地模型
                     true  - 离线模式，不连接网络（推荐）
                     false - 允许从 HuggingFace 在线下载
+
+    quantization    量化模式（降低内存占用）
+                    none  - 不量化，使用 float16（默认）
+                    8bit  - 8位量化（内存减半，效果几乎无损）
+                    4bit  - 4位量化（内存降至1/4，效果略有下降）
+                    注意: 8bit/4bit 需要安装 bitsandbytes 库
 
   【识别设置 ocr】
 

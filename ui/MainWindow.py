@@ -447,16 +447,19 @@ class MainWindow(ctk.CTk):
         def load_thread():
             self.log("开始加载模型...")
             self.btn_load_model.configure(state="disabled", text="加载中...")
+            quantization = self.config.get("model.quantization", "none")
             if self.config.get("model.use_local_only"):
                 self.ocr_engine = OCREngine(
                     model_path=self.config.get("model.local_path"),
                     device=self.config.get("model.device"),
-                    use_local_only=self.config.get("model.use_local_only")
+                    use_local_only=self.config.get("model.use_local_only"),
+                    quantization=quantization
                 )
             else:
                 self.ocr_engine = OCREngine(
                     model_path=self.config.get("model.name"),
-                    device=self.config.get("model.device")
+                    device=self.config.get("model.device"),
+                    quantization=quantization
                 )
 
             success = self.ocr_engine.load_model(

@@ -5,7 +5,8 @@
     "device": "auto",
     "torch_dtype": "float16",
     "max_new_tokens": 2048,
-    "use_local_only": true
+    "use_local_only": true,
+    "quantization": "8bit"
   },
   "ocr": {
     "language": "简体中文",

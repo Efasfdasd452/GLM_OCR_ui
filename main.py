@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 import os
 os.environ["TORCH_DISABLE_TORCH_NP"] = "1"
+# 减少 CUDA 显存碎片化
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # ok ok
 
 # 判断是否为 PyInstaller 打包环境
