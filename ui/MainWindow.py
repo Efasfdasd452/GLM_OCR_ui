@@ -14,6 +14,7 @@ from utils.FileUtils import FileUtils
 from utils.ClipboardUtils import ClipboardUtils
 from utils.QRCodeUtils import QRCodeUtils
 from utils.ScreenCapture import ScreenCapture
+from utils.PDFUtils import PDFUtils
 
 
 class MainWindow(ctk.CTk):
@@ -86,7 +87,7 @@ class MainWindow(ctk.CTk):
         """创建侧边栏"""
         self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsw", padx=0, pady=0)
-        self.sidebar.grid_rowconfigure(6, weight=1)
+        self.sidebar.grid_rowconfigure(7, weight=1)
 
         # Logo / 标题
         self.logo_label = ctk.CTkLabel(
@@ -129,13 +130,21 @@ class MainWindow(ctk.CTk):
         )
         self.btn_folder.grid(row=4, column=0, padx=20, pady=10)
 
+        self.btn_pdf_ocr = ctk.CTkButton(
+            self.sidebar,
+            text="📄 文档 OCR",
+            command=self.pdf_ocr,
+            height=40
+        )
+        self.btn_pdf_ocr.grid(row=5, column=0, padx=20, pady=10)
+
         self.btn_settings = ctk.CTkButton(
             self.sidebar,
             text="⚙️ 设置",
             command=self.open_settings,
             height=40
         )
-        self.btn_settings.grid(row=5, column=0, padx=20, pady=10)
+        self.btn_settings.grid(row=6, column=0, padx=20, pady=10)
 
         # 模型状态
         self.model_status_label = ctk.CTkLabel(
@@ -143,7 +152,7 @@ class MainWindow(ctk.CTk):
             text="模型未加载",
             text_color="red"
         )
-        self.model_status_label.grid(row=7, column=0, padx=20, pady=(10, 20))
+        self.model_status_label.grid(row=8, column=0, padx=20, pady=(10, 20))
 
         # 加载/卸载模型按钮
         self.btn_load_model = ctk.CTkButton(
@@ -153,7 +162,7 @@ class MainWindow(ctk.CTk):
             fg_color="green",
             height=40
         )
-        self.btn_load_model.grid(row=8, column=0, padx=20, pady=(10, 20))
+        self.btn_load_model.grid(row=9, column=0, padx=20, pady=(10, 20))
 
     def create_main_content(self):
         """创建主内容区"""
@@ -244,6 +253,10 @@ class MainWindow(ctk.CTk):
         # 批量 OCR 标签页
         self.tab_batch = self.tabview.add("批量OCR")
         self.create_batch_tab()
+
+        # PDF OCR 标签页
+        self.tab_pdf = self.tabview.add("PDF OCR")
+        self.create_pdf_tab()
 
         # 二维码生成标签页
         self.tab_qrgen = self.tabview.add("二维码生成")
@@ -350,6 +363,54 @@ class MainWindow(ctk.CTk):
 
         # 批量文件列表
         self.batch_files = []
+
+    def create_pdf_tab(self):
+        """创建 PDF OCR 标签页"""
+        self.tab_pdf.grid_columnconfigure(0, weight=1)
+        self.tab_pdf.grid_rowconfigure(3, weight=1)
+
+        # 控制区
+        pdf_control_frame = ctk.CTkFrame(self.tab_pdf)
+        pdf_control_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        pdf_control_frame.grid_columnconfigure(1, weight=1)
+
+        self.btn_select_pdf = ctk.CTkButton(
+            pdf_control_frame,
+            text="选择 PDF 文件",
+            command=self.pdf_ocr,
+            width=140
+        )
+        self.btn_select_pdf.grid(row=0, column=0, padx=(10, 5), pady=10)
+
+        self.pdf_path_label = ctk.CTkLabel(
+            pdf_control_frame,
+            text="未选择文件",
+            anchor="w"
+        )
+        self.pdf_path_label.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+
+        self.btn_save_pdf_result = ctk.CTkButton(
+            pdf_control_frame,
+            text="保存结果",
+            command=self.save_pdf_result,
+            width=100
+        )
+        self.btn_save_pdf_result.grid(row=0, column=2, padx=(5, 10), pady=10)
+
+        # 进度区
+        self.pdf_progress_label = ctk.CTkLabel(self.tab_pdf, text="进度: 0/0")
+        self.pdf_progress_label.grid(row=1, column=0, padx=10, pady=(5, 0), sticky="w")
+
+        self.pdf_progress_bar = ctk.CTkProgressBar(self.tab_pdf)
+        self.pdf_progress_bar.grid(row=2, column=0, padx=10, pady=(5, 10), sticky="ew")
+        self.pdf_progress_bar.set(0)
+
+        # 结果显示区
+        self.pdf_result_text = ctk.CTkTextbox(self.tab_pdf)
+        self.pdf_result_text.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="nsew")
+
+        # 保存当前 PDF 结果
+        self._pdf_result_content = ""
 
     def create_qrgen_tab(self):
         """创建二维码生成标签页"""
@@ -580,6 +641,111 @@ class MainWindow(ctk.CTk):
         """文件夹OCR"""
         self.tabview.set("批量OCR")
         self.add_batch_folder()
+
+    def pdf_ocr(self):
+        """PDF 文档 OCR"""
+        if not self.model_loaded:
+            messagebox.showwarning("警告", "请先加载模型")
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="选择 PDF 文件",
+            filetypes=[("PDF 文件", "*.pdf")]
+        )
+
+        if not file_path:
+            return
+
+        self.tabview.set("PDF OCR")
+        self.pdf_path_label.configure(text=file_path)
+        self.pdf_result_text.delete("1.0", "end")
+        self.pdf_progress_bar.set(0)
+        self.pdf_progress_label.configure(text="正在转换 PDF...")
+        self._pdf_result_content = ""
+        self.log(f"开始处理 PDF: {file_path}")
+
+        threading.Thread(
+            target=self._pdf_ocr_thread,
+            args=(file_path,),
+            daemon=True
+        ).start()
+
+    def _pdf_ocr_thread(self, pdf_path):
+        """PDF OCR 后台线程"""
+        try:
+            # 转换 PDF 为图片
+            self.log("正在将 PDF 转换为图片...")
+            images = PDFUtils.pdf_to_images(pdf_path)
+            total = len(images)
+            self.log(f"PDF 共 {total} 页，开始逐页识别...")
+            self.pdf_progress_label.configure(text=f"进度: 0/{total}")
+
+            pdf_name = Path(pdf_path).name
+            result_parts = [f"# {pdf_name} OCR 结果\n"]
+
+            for i, page_image in enumerate(images, 1):
+                self.pdf_progress_label.configure(text=f"正在识别第 {i}/{total} 页...")
+                self.log(f"正在识别第 {i}/{total} 页...")
+
+                text = self.ocr_engine.recognize_image(
+                    page_image,
+                    prompt="Document Parsing:",
+                    max_new_tokens=self.current_tokens
+                )
+
+                page_image.close()
+
+                page_md = f"\n## 第 {i} 页\n\n"
+                if text and text.strip():
+                    page_md += text.strip()
+                else:
+                    page_md += "（此页未识别到内容）"
+                if i < total:
+                    page_md += "\n\n---\n"
+
+                result_parts.append(page_md)
+
+                # 实时更新结果显示
+                self._pdf_result_content = "\n".join(result_parts)
+                self.pdf_result_text.delete("1.0", "end")
+                self.pdf_result_text.insert("1.0", self._pdf_result_content)
+                self.pdf_result_text.see("end")
+
+                # 更新进度条
+                self.pdf_progress_bar.set(i / total)
+                self.pdf_progress_label.configure(text=f"进度: {i}/{total}")
+
+            self.log(f"✓ PDF OCR 完成，共识别 {total} 页")
+            messagebox.showinfo("完成", f"PDF OCR 完成！\n共识别 {total} 页")
+
+        except ImportError as e:
+            self.log(f"✗ 依赖缺失: {e}")
+            messagebox.showerror("依赖缺失", str(e))
+        except Exception as e:
+            self.log(f"✗ PDF OCR 失败: {e}")
+            messagebox.showerror("错误", f"PDF OCR 失败:\n{e}")
+
+    def save_pdf_result(self):
+        """保存 PDF OCR 结果"""
+        if not self._pdf_result_content:
+            messagebox.showwarning("警告", "没有可保存的内容")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="保存 OCR 结果",
+            defaultextension=".md",
+            filetypes=[("Markdown 文件", "*.md"), ("文本文件", "*.txt")]
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self._pdf_result_content)
+                self.log(f"✓ 结果已保存: {file_path}")
+                messagebox.showinfo("保存成功", f"结果已保存到:\n{file_path}")
+            except Exception as e:
+                self.log(f"✗ 保存失败: {e}")
+                messagebox.showerror("错误", f"保存失败: {e}")
 
     def quick_ocr(self):
         """快速OCR"""

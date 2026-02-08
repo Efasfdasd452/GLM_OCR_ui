@@ -25,6 +25,7 @@ def build_exe():
         '--add-data=core;core',  # 包含核心模块
         '--add-data=utils;utils',  # 包含工具模块
         '--add-data=ui;ui',  # 包含界面模块
+        '--add-data=poppler;poppler',  # 包含 Poppler（PDF 转图片）
         '--hidden-import=torch',  # 隐藏导入
         '--hidden-import=transformers',
         '--hidden-import=customtkinter',
@@ -38,6 +39,7 @@ def build_exe():
         '--hidden-import=PIL',
         '--hidden-import=pyzbar',
         '--hidden-import=qrcode',
+        '--hidden-import=pdf2image',
         '--collect-all=pyzbar',  # 收集 pyzbar 及其 DLL (libzbar-64.dll, libiconv.dll)
         '--collect-all=torch',  # 收集所有 torch 文件
         "--exclude-module=torch._numpy",

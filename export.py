@@ -138,6 +138,7 @@ def create_portable_package():
         ("core/", "核心模块"),
         ("utils/", "工具模块"),
         ("ui/", "界面模块"),
+        ("poppler/", "Poppler（PDF转图片）"),
     ]
 
     for src, desc in files_to_copy:
