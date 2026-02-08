@@ -36,6 +36,9 @@ def build_exe():
     "--hidden-import=transformers.image_processing_base",
     "--hidden-import=transformers.image_utils",
         '--hidden-import=PIL',
+        '--hidden-import=pyzbar',
+        '--hidden-import=qrcode',
+        '--collect-all=pyzbar',  # 收集 pyzbar 及其 DLL (libzbar-64.dll, libiconv.dll)
         '--collect-all=torch',  # 收集所有 torch 文件
         "--exclude-module=torch._numpy",
         "--exclude-module=torch._numpy._ufuncs",

@@ -13,6 +13,7 @@ from core.OCREngine import OCREngine
 from utils.FileUtils import FileUtils
 from utils.ClipboardUtils import ClipboardUtils
 from utils.QRCodeUtils import QRCodeUtils
+from utils.ScreenCapture import ScreenCapture
 
 
 class MainWindow(ctk.CTk):
@@ -464,6 +465,8 @@ class MainWindow(ctk.CTk):
         self.bind("<Control-q>", lambda e: self.quick_ocr())
         self.bind("<Control-v>", lambda e: self.clipboard_ocr())
         self.bind("<Control-o>", lambda e: self.select_image())
+        self.bind("<Control-Shift-s>", lambda e: self.screenshot_ocr())
+        self.bind("<Control-Shift-S>", lambda e: self.screenshot_ocr())
 
     # ==================== 功能方法 ====================
 
@@ -525,10 +528,31 @@ class MainWindow(ctk.CTk):
         self.log("模型已卸载")
 
     def screenshot_ocr(self):
-        """截图OCR"""
-        self.log("截图功能待实现...")
-        messagebox.showinfo("提示", "截图功能暂时没有实现，"
-                                    "按下windows键(就是左下角那四个方块的按键)+shift(左下角z左边那个长点的键)+s(不用大写)截图")
+        """截图"""
+        screenshots_dir = self.base_dir / "screenshots"
+        capture = ScreenCapture(
+            parent=self,
+            save_dir=str(screenshots_dir),
+            callback=self._on_screenshot_done,
+        )
+        capture.start()
+
+    def _on_screenshot_done(self, image, save_path):
+        """截图完成回调"""
+        if image is None:
+            self.log("截图已取消")
+            return
+
+        self.log(f"截图已保存: {save_path}")
+        self.log("截图已复制到剪贴板")
+        self.show_image_preview(image)
+
+        messagebox.showinfo(
+            "截图成功",
+            f"截图已保存到:\n{save_path}\n\n"
+            f"同时已复制到剪贴板。\n\n"
+            f"提示: 下次可以直接按 Ctrl+Shift+S 快速截图哦~"
+        )
 
     def clipboard_ocr(self):
         """剪贴板OCR"""
