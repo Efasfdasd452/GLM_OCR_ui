@@ -15,6 +15,8 @@ from utils.ClipboardUtils import ClipboardUtils
 from utils.QRCodeUtils import QRCodeUtils
 from utils.ScreenCapture import ScreenCapture
 from utils.PDFUtils import PDFUtils
+from ui.ToastNotification import ToastNotification
+from ui.LanguageManager import LanguageManager
 
 
 class MainWindow(ctk.CTk):
@@ -35,6 +37,9 @@ class MainWindow(ctk.CTk):
         # 配置
         self.config = Config(str(self.base_dir / "config.json"), base_dir=self.base_dir)
 
+        # 语言管理器
+        self.lang = LanguageManager(self.config.get("ui.language", "简体中文"))
+
         # OCR 引擎
         self.ocr_engine = None
         self.model_loaded = False
@@ -51,7 +56,7 @@ class MainWindow(ctk.CTk):
 
     def setup_window(self):
         """设置窗口"""
-        self.title("GLM-OCR GUI")
+        self.title(self.lang.get("window_title"))
 
         # 获取屏幕尺寸
         screen_width = self.winfo_screenwidth()
@@ -70,6 +75,52 @@ class MainWindow(ctk.CTk):
         # 设置主题
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
+
+    def update_ui_language(self):
+        """更新所有界面元素的语言"""
+        # 更新窗口标题
+        self.title(self.lang.get("window_title"))
+
+        # 更新侧边栏按钮
+        self.btn_screenshot.configure(text=self.lang.get("screenshot_ocr"))
+        self.btn_clipboard.configure(text=self.lang.get("clipboard_ocr"))
+        self.btn_batch.configure(text=self.lang.get("batch_ocr"))
+        self.btn_folder.configure(text=self.lang.get("folder_ocr"))
+        self.btn_pdf_ocr.configure(text=self.lang.get("document_ocr"))
+        self.btn_settings.configure(text=self.lang.get("settings"))
+
+        # 更新模型状态
+        if self.model_loaded:
+            self.model_status_label.configure(text=self.lang.get("model_loaded"))
+            self.btn_load_model.configure(text=self.lang.get("unload_model"))
+        else:
+            self.model_status_label.configure(text=self.lang.get("model_not_loaded"))
+            self.btn_load_model.configure(text=self.lang.get("load_model"))
+
+        # 更新控制栏
+        self.prompt_label.configure(text=self.lang.get("recognition_type"))
+        self.token_label.configure(text=self.lang.get("token_count"))
+
+        # 更新识别类型选项
+        self.prompt_type.configure(values=[
+            self.lang.get("text_recognition"),
+            self.lang.get("document_parsing"),
+            self.lang.get("table_recognition"),
+            self.lang.get("formula_recognition"),
+            self.lang.get("qrcode_recognition")
+        ])
+
+        # 更新快速识别和复制结果按钮
+        self.btn_quick_ocr.configure(text=self.lang.get("quick_recognition"))
+        self.btn_copy_result.configure(text=self.lang.get("copy_result"))
+
+        # 更新单图OCR标签页
+        self.image_label.configure(text=self.lang.get("image_preview_hint"))
+        self.btn_select_image.configure(text=self.lang.get("select_image"))
+        self.result_label.configure(text=self.lang.get("recognition_result"))
+
+        # 更新选项卡标题（需要重新创建，CustomTkinter 不支持直接修改）
+        # 暂时跳过，因为需要重建整个 tabview
 
     def create_widgets(self):
         """创建界面组件"""
@@ -93,14 +144,14 @@ class MainWindow(ctk.CTk):
         self.logo_label = ctk.CTkLabel(
             self.sidebar,
             text="GLM-OCR",
-            font=ctk.CTkFont(size=24, weight="bold")
+            font=("Microsoft YaHei UI", 24, "bold")
         )
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
         # 功能按钮
         self.btn_screenshot = ctk.CTkButton(
             self.sidebar,
-            text="📸 截图 OCR",
+            text=self.lang.get("screenshot_ocr"),
             command=self.screenshot_ocr,
             height=40
         )
@@ -108,7 +159,7 @@ class MainWindow(ctk.CTk):
 
         self.btn_clipboard = ctk.CTkButton(
             self.sidebar,
-            text="📋 剪贴板 OCR",
+            text=self.lang.get("clipboard_ocr"),
             command=self.clipboard_ocr,
             height=40
         )
@@ -116,7 +167,7 @@ class MainWindow(ctk.CTk):
 
         self.btn_batch = ctk.CTkButton(
             self.sidebar,
-            text="📁 批量 OCR",
+            text=self.lang.get("batch_ocr"),
             command=self.batch_ocr,
             height=40
         )
@@ -124,7 +175,7 @@ class MainWindow(ctk.CTk):
 
         self.btn_folder = ctk.CTkButton(
             self.sidebar,
-            text="📂 文件夹 OCR",
+            text=self.lang.get("folder_ocr"),
             command=self.folder_ocr,
             height=40
         )
@@ -132,7 +183,7 @@ class MainWindow(ctk.CTk):
 
         self.btn_pdf_ocr = ctk.CTkButton(
             self.sidebar,
-            text="📄 文档 OCR",
+            text=self.lang.get("document_ocr"),
             command=self.pdf_ocr,
             height=40
         )
@@ -140,7 +191,7 @@ class MainWindow(ctk.CTk):
 
         self.btn_settings = ctk.CTkButton(
             self.sidebar,
-            text="⚙️ 设置",
+            text=self.lang.get("settings"),
             command=self.open_settings,
             height=40
         )
@@ -149,7 +200,7 @@ class MainWindow(ctk.CTk):
         # 模型状态
         self.model_status_label = ctk.CTkLabel(
             self.sidebar,
-            text="模型未加载",
+            text=self.lang.get("model_not_loaded"),
             text_color="red"
         )
         self.model_status_label.grid(row=8, column=0, padx=20, pady=(10, 20))
@@ -157,7 +208,7 @@ class MainWindow(ctk.CTk):
         # 加载/卸载模型按钮
         self.btn_load_model = ctk.CTkButton(
             self.sidebar,
-            text="加载模型",
+            text=self.lang.get("load_model"),
             command=self.toggle_model,
             fg_color="green",
             height=40
@@ -184,19 +235,28 @@ class MainWindow(ctk.CTk):
         self.control_frame.grid_columnconfigure(1, weight=1)
 
         # 提示词类型选择
-        self.prompt_label = ctk.CTkLabel(self.control_frame, text="识别类型:")
+        self.prompt_label = ctk.CTkLabel(self.control_frame, text=self.lang.get("recognition_type"))
         self.prompt_label.grid(row=0, column=0, padx=(10, 5), pady=10)
 
+        recognition_types = [
+            self.lang.get("text_recognition"),
+            self.lang.get("document_parsing"),
+            self.lang.get("table_recognition"),
+            self.lang.get("formula_recognition"),
+            self.lang.get("qrcode_recognition")
+        ]
         self.prompt_type = ctk.CTkOptionMenu(
             self.control_frame,
-            values=["文本识别", "文档解析", "表格识别", "公式识别", "二维码识别"],
+            values=recognition_types,
+            font=("Microsoft YaHei UI", 12),
             command=self.on_prompt_change
         )
+        self.prompt_type.set(recognition_types[0])  # 设置默认值
         self.prompt_type.grid(row=0, column=1, padx=5, pady=10, sticky="w")
 
         # Token 调整控件
         # Token 标签
-        self.token_label = ctk.CTkLabel(self.control_frame, text="Token数:")
+        self.token_label = ctk.CTkLabel(self.control_frame, text=self.lang.get("token_count"))
         self.token_label.grid(row=0, column=2, padx=(20, 5), pady=10)
 
         # Token 滑块
@@ -223,23 +283,6 @@ class MainWindow(ctk.CTk):
         self.token_entry.grid(row=0, column=4, padx=5, pady=10)
         self.token_entry.bind("<Return>", self.on_token_entry_change)
         self.token_entry.bind("<FocusOut>", self.on_token_entry_change)
-
-        # 快速操作按钮
-        self.btn_quick_ocr = ctk.CTkButton(
-            self.control_frame,
-            text="快速识别 (Ctrl+Q)",
-            command=self.quick_ocr,
-            width=150
-        )
-        self.btn_quick_ocr.grid(row=0, column=5, padx=5, pady=10)
-
-        self.btn_copy_result = ctk.CTkButton(
-            self.control_frame,
-            text="复制结果",
-            command=self.copy_result,
-            width=100
-        )
-        self.btn_copy_result.grid(row=0, column=6, padx=5, pady=10)
 
     def create_tabs(self):
         """创建选项卡"""
@@ -278,7 +321,7 @@ class MainWindow(ctk.CTk):
 
         self.image_label = ctk.CTkLabel(
             self.image_frame,
-            text="点击选择图片或粘贴图片\n支持拖拽图片到此处",
+            text=self.lang.get("image_preview_hint"),
             height=200,
             fg_color="gray85"
         )
@@ -287,15 +330,43 @@ class MainWindow(ctk.CTk):
         # 文件选择按钮
         self.btn_select_image = ctk.CTkButton(
             self.image_frame,
-            text="选择图片",
+            text=self.lang.get("select_image"),
             command=self.select_image
         )
         self.btn_select_image.grid(row=1, column=0, padx=10, pady=(0, 10))
 
-        # 结果显示区
-        self.result_label = ctk.CTkLabel(self.tab_single, text="识别结果:")
-        self.result_label.grid(row=2, column=0, padx=10, pady=(10, 5), sticky="w")
+        # 结果显示区标题和按钮
+        result_header_frame = ctk.CTkFrame(self.tab_single, fg_color="transparent")
+        result_header_frame.grid(row=2, column=0, padx=10, pady=(10, 5), sticky="ew")
+        result_header_frame.grid_columnconfigure(0, weight=1)
 
+        self.result_label = ctk.CTkLabel(result_header_frame, text=self.lang.get("recognition_result"), anchor="w")
+        self.result_label.grid(row=0, column=0, sticky="w")
+
+        # 快速识别按钮
+        self.btn_quick_ocr = ctk.CTkButton(
+            result_header_frame,
+            text=self.lang.get("quick_recognition"),
+            command=self.quick_ocr,
+            width=160,
+            height=35,
+            font=("Microsoft YaHei UI", 13)
+        )
+        self.btn_quick_ocr.grid(row=0, column=1, padx=5)
+
+        # 复制结果按钮
+        self.btn_copy_result = ctk.CTkButton(
+            result_header_frame,
+            text=self.lang.get("copy_result"),
+            command=self.copy_result,
+            width=120,
+            height=35,
+            font=("Microsoft YaHei UI", 13),
+            fg_color="#1f6aa5"
+        )
+        self.btn_copy_result.grid(row=0, column=2, padx=5)
+
+        # 结果文本框
         self.result_text = ctk.CTkTextbox(self.tab_single, height=300)
         self.result_text.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="nsew")
         self.tab_single.grid_rowconfigure(3, weight=1)
@@ -598,6 +669,69 @@ class MainWindow(ctk.CTk):
         )
         capture.start()
 
+    def _show_screenshot_success_dialog(self, save_path):
+        """显示截图成功对话框（带"下次不再提醒"选项）"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(self.lang.get("screenshot_success_title"))
+        dialog.geometry("450x220")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        # 居中显示
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 450) // 2
+        y = self.winfo_y() + (self.winfo_height() - 220) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # 图标/标题
+        title_label = ctk.CTkLabel(
+            dialog,
+            text=self.lang.get("screenshot_success_title"),
+            font=("Microsoft YaHei UI", 18, "bold"),
+            text_color="green"
+        )
+        title_label.pack(pady=(20, 10))
+
+        # 消息内容
+        message_text = self.lang.get("screenshot_success_message", save_path)
+        message_label = ctk.CTkLabel(
+            dialog,
+            text=message_text,
+            justify="left",
+            wraplength=400
+        )
+        message_label.pack(pady=10, padx=20)
+
+        # "下次不再提醒"复选框
+        dont_show_var = ctk.BooleanVar(dialog, value=False)
+        dont_show_checkbox = ctk.CTkCheckBox(
+            dialog,
+            text=self.lang.get("dont_show_again"),
+            variable=dont_show_var
+        )
+        dont_show_checkbox.pack(pady=(10, 5))
+
+        # 确认按钮
+        def on_confirm():
+            if dont_show_var.get():
+                # 保存配置
+                self.config.set("ui.screenshot_reminder_disabled", True)
+                self.config.save_config()
+                self.log("已禁用截图成功提示")
+            dialog.destroy()
+
+        confirm_btn = ctk.CTkButton(
+            dialog,
+            text=self.lang.get("confirm"),
+            command=on_confirm,
+            width=100,
+            fg_color="green"
+        )
+        confirm_btn.pack(pady=(5, 20))
+
+        # 按 Enter 键也能确认
+        dialog.bind("<Return>", lambda e: on_confirm())
+
     def _on_screenshot_done(self, image, save_path):
         """截图完成回调"""
         if image is None:
@@ -608,12 +742,9 @@ class MainWindow(ctk.CTk):
         self.log("截图已复制到剪贴板")
         self.show_image_preview(image)
 
-        messagebox.showinfo(
-            "截图成功",
-            f"截图已保存到:\n{save_path}\n\n"
-            f"同时已复制到剪贴板。\n\n"
-            f"提示: 下次可以直接按 Ctrl+Shift+S 快速截图哦~"
-        )
+        # 检查是否设置了不再提醒
+        if not self.config.get("ui.screenshot_reminder_disabled", False):
+            self._show_screenshot_success_dialog(save_path)
 
     def clipboard_ocr(self):
         """剪贴板OCR"""
@@ -984,6 +1115,14 @@ class MainWindow(ctk.CTk):
         # 同步更新输入框显示
         self.token_value_var.set(str(token_value))
 
+        # 保存到配置
+        self.config.set("model.max_new_tokens", token_value)
+        self.config.save_config()
+
+        # 显示 Toast 提示
+        toast_text = self.lang.get("toast_token_saved")
+        ToastNotification.show(self, f"{toast_text} {token_value}", duration=1500)
+
         # 记录日志
         self.log(f"Token 值调整为: {token_value}")
 
@@ -1001,10 +1140,10 @@ class MainWindow(ctk.CTk):
             # 范围验证
             if token_value < min_tokens:
                 token_value = min_tokens
-                messagebox.showwarning("警告", f"Token 值不能小于 {min_tokens}，已自动调整")
+                ToastNotification.show(self, f"⚠ Token 值不能小于 {min_tokens}，已自动调整", duration=2000)
             elif token_value > max_tokens:
                 token_value = max_tokens
-                messagebox.showwarning("警告", f"Token 值不能超过 {max_tokens}，已自动调整")
+                ToastNotification.show(self, f"⚠ Token 值不能超过 {max_tokens}，已自动调整", duration=2000)
 
             # 更新值
             self.current_tokens = token_value
@@ -1013,107 +1152,210 @@ class MainWindow(ctk.CTk):
             # 同步滑块
             self.token_slider.set(token_value)
 
+            # 保存到配置
+            self.config.set("model.max_new_tokens", token_value)
+            self.config.save_config()
+
+            # 显示 Toast 提示
+            toast_text = self.lang.get("toast_token_saved")
+            ToastNotification.show(self, f"{toast_text} {token_value}", duration=1500)
+
             self.log(f"Token 值设置为: {token_value}")
 
         except ValueError:
             # 输入非数字，恢复为上次有效值
             self.token_value_var.set(str(self.current_tokens))
-            messagebox.showerror("错误", "请输入有效的数字")
+            ToastNotification.show(self, "✗ Invalid number", duration=2000)
 
     def open_settings(self):
         """打开设置窗口"""
         settings_win = ctk.CTkToplevel(self)
-        settings_win.title("设置")
-        settings_win.geometry("500x300")
+        settings_win.title(self.lang.get("settings_title"))
+        settings_win.geometry("550x450")
         settings_win.resizable(False, False)
         settings_win.grab_set()
 
         # 居中显示
         settings_win.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 500) // 2
-        y = self.winfo_y() + (self.winfo_height() - 300) // 2
+        x = self.winfo_x() + (self.winfo_width() - 550) // 2
+        y = self.winfo_y() + (self.winfo_height() - 450) // 2
         settings_win.geometry(f"+{x}+{y}")
 
-        # 输出目录设置
-        ctk.CTkLabel(settings_win, text="输出目录:", font=ctk.CTkFont(size=14)).grid(
-            row=0, column=0, padx=(20, 10), pady=(30, 10), sticky="w"
+        # 标题
+        title_label = ctk.CTkLabel(
+            settings_win,
+            text=self.lang.get("settings"),
+            font=("Microsoft YaHei UI", 20, "bold")
+        )
+        title_label.grid(row=0, column=0, columnspan=3, pady=(20, 10))
+
+        # 提示文本
+        hint_label = ctk.CTkLabel(
+            settings_win,
+            text=self.lang.get("auto_save_hint"),
+            font=("Microsoft YaHei UI", 11),
+            text_color="gray"
+        )
+        hint_label.grid(row=1, column=0, columnspan=3, pady=(0, 15))
+
+        # ========== 语言设置 ==========
+        ctk.CTkLabel(settings_win, text=self.lang.get("interface_language"), font=("Microsoft YaHei UI", 14)).grid(
+            row=2, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
-        output_dir_var = ctk.StringVar(value=self.config.get("batch.output_dir", "./output"))
-        output_dir_entry = ctk.CTkEntry(settings_win, textvariable=output_dir_var, width=280)
-        output_dir_entry.grid(row=0, column=1, padx=5, pady=(30, 10))
+        language_options = [
+            "简体中文",
+            "繁體中文（香港）",
+            "繁體中文（台灣）",
+            "English",
+            "Français",
+            "Deutsch",
+            "日本語",
+            "Italiano",
+            "Русский"
+        ]
+
+        language_var = ctk.StringVar(settings_win, value=self.config.get("ui.language", "简体中文"))
+        language_menu = ctk.CTkOptionMenu(
+
+            settings_win,
+            variable=language_var,
+            values=language_options,
+            width=250,
+            font=("Microsoft YaHei UI", 12),
+            command=lambda choice: self._save_language(choice, settings_win)
+        )
+        language_menu.grid(row=2, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # ========== 输出目录设置 ==========
+        ctk.CTkLabel(settings_win, text=self.lang.get("output_directory"), font=("Microsoft YaHei UI", 14)).grid(
+            row=3, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        output_dir_var = ctk.StringVar(settings_win, value=self.config.get("batch.output_dir", "./output"))
+        output_dir_entry = ctk.CTkEntry(settings_win, textvariable=output_dir_var, width=250)
+        output_dir_entry.grid(row=3, column=1, padx=10, pady=12)
 
         def browse_output_dir():
             folder = filedialog.askdirectory(title="选择输出目录", parent=settings_win)
             if folder:
                 output_dir_var.set(folder)
+                self.config.set("batch.output_dir", folder)
+                self.config.save_config()
+                toast_text = self.lang.get("toast_output_dir_saved")
+                ToastNotification.show(settings_win, toast_text, duration=1500)
+                self.log(f"输出目录已设置为: {folder}")
 
-        ctk.CTkButton(settings_win, text="浏览", command=browse_output_dir, width=80).grid(
-            row=0, column=2, padx=(5, 20), pady=(30, 10)
+        ctk.CTkButton(settings_win, text=self.lang.get("browse"), command=browse_output_dir, width=70).grid(
+            row=3, column=2, padx=10, pady=12
         )
 
-        # 最大 Token 限制设置
-        ctk.CTkLabel(settings_win, text="最大 Token 限制:", font=ctk.CTkFont(size=14)).grid(
-            row=1, column=0, padx=(20, 10), pady=10, sticky="w"
+        # ========== 最大 Token 限制设置 ==========
+        ctk.CTkLabel(settings_win, text=self.lang.get("max_token_limit"), font=("Microsoft YaHei UI", 14)).grid(
+            row=4, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         max_tokens_var = ctk.IntVar(
+            settings_win,
             value=self.config.get("model.max_new_tokens_limit", 8192)
         )
+
+        def save_max_tokens(*args):
+            try:
+                new_value = max_tokens_var.get()
+                if new_value < 512:
+                    new_value = 512
+                    max_tokens_var.set(512)
+                    ToastNotification.show(settings_win, "⚠ 最小值为 512", duration=1500)
+                elif new_value > 32768:
+                    new_value = 32768
+                    max_tokens_var.set(32768)
+                    ToastNotification.show(settings_win, "⚠ 最大值为 32768", duration=1500)
+
+                self.config.set("model.max_new_tokens_limit", new_value)
+                self.config.save_config()
+
+                # 更新主界面滑块
+                self.token_slider.configure(to=new_value)
+                if self.current_tokens > new_value:
+                    self.current_tokens = new_value
+                    self.token_slider.set(new_value)
+                    self.token_value_var.set(str(new_value))
+
+                toast_text = self.lang.get("toast_token_saved")
+                ToastNotification.show(settings_win, f"{toast_text} {new_value}", duration=1500)
+                self.log(f"最大 Token 限制已设置为: {new_value}")
+            except:
+                pass
+
+        max_tokens_var.trace_add("write", save_max_tokens)
+
         max_tokens_entry = ctk.CTkEntry(
             settings_win,
             textvariable=max_tokens_var,
-            width=150
+            width=120
         )
-        max_tokens_entry.grid(row=1, column=1, padx=5, pady=10, sticky="w")
+        max_tokens_entry.grid(row=4, column=1, padx=10, pady=12, sticky="w")
 
         ctk.CTkLabel(
             settings_win,
-            text="(512-32768，建议 8192)",
-            font=ctk.CTkFont(size=11),
+            text="(512-32768)",
+            font=("Microsoft YaHei UI", 11),
             text_color="gray"
-        ).grid(row=1, column=2, padx=5, pady=10, sticky="w")
+        ).grid(row=4, column=2, padx=10, pady=12, sticky="w")
 
-        def save_settings():
-            new_dir = output_dir_var.get().strip()
-            if not new_dir:
-                new_dir = "./output"
-            self.config.set("batch.output_dir", new_dir)
-
-            # 保存最大 token 限制
-            try:
-                new_max_tokens = max_tokens_var.get()
-                if new_max_tokens < 512:
-                    new_max_tokens = 512
-                elif new_max_tokens > 32768:
-                    new_max_tokens = 32768
-
-                self.config.set("model.max_new_tokens_limit", new_max_tokens)
-
-                # 更新滑块最大值
-                self.token_slider.configure(to=new_max_tokens)
-
-                # 如果当前值超过新限制，自动调整
-                if self.current_tokens > new_max_tokens:
-                    self.current_tokens = new_max_tokens
-                    self.token_slider.set(new_max_tokens)
-                    self.token_value_var.set(str(new_max_tokens))
-            except Exception as e:
-                messagebox.showerror("错误", f"Token 限制设置无效: {e}", parent=settings_win)
-                return
-
-            self.config.save_config()
-            self.log(f"输出目录已设置为: {new_dir}")
-            self.log(f"最大 Token 限制已设置为: {new_max_tokens}")
-            messagebox.showinfo(
-                "提示",
-                f"设置已保存!\n输出目录: {new_dir}\n最大 Token: {new_max_tokens}",
-                parent=settings_win
-            )
-
-        ctk.CTkButton(settings_win, text="保存设置", command=save_settings, width=120, fg_color="green").grid(
-            row=2, column=0, columnspan=3, pady=(20, 10)
+        # ========== 截图提示设置 ==========
+        ctk.CTkLabel(settings_win, text=self.lang.get("screenshot_prompt"), font=("Microsoft YaHei UI", 14)).grid(
+            row=5, column=0, padx=(40, 10), pady=12, sticky="w"
         )
+
+        screenshot_reminder_var = ctk.BooleanVar(
+            settings_win,
+            value=not self.config.get("ui.screenshot_reminder_disabled", False)
+        )
+
+        def save_screenshot_reminder():
+            self.config.set("ui.screenshot_reminder_disabled", not screenshot_reminder_var.get())
+            self.config.save_config()
+            if screenshot_reminder_var.get():
+                toast_text = self.lang.get("toast_screenshot_enabled")
+            else:
+                toast_text = self.lang.get("toast_screenshot_disabled")
+            ToastNotification.show(settings_win, toast_text, duration=1500)
+            self.log(f"截图提示已{'启用' if screenshot_reminder_var.get() else '禁用'}")
+
+        screenshot_reminder_checkbox = ctk.CTkCheckBox(
+            settings_win,
+            text=self.lang.get("show_screenshot_success"),
+            variable=screenshot_reminder_var,
+            command=save_screenshot_reminder
+        )
+        screenshot_reminder_checkbox.grid(row=5, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # ========== 关闭按钮 ==========
+        ctk.CTkButton(
+            settings_win,
+            text=self.lang.get("close"),
+            command=settings_win.destroy,
+            width=100,
+            height=35
+        ).grid(row=6, column=0, columnspan=3, pady=(25, 20))
+
+    def _save_language(self, language, parent_win):
+        """保存语言设置"""
+        self.config.set("ui.language", language)
+        self.config.save_config()
+
+        # 更新语言管理器
+        self.lang.set_language(language)
+
+        # 更新界面语言
+        self.update_ui_language()
+
+        # 显示 Toast（使用新语言）
+        toast_text = self.lang.get("toast_language_saved")
+        ToastNotification.show(parent_win, f"{toast_text} {language}", duration=1500)
+        self.log(f"界面语言已设置为: {language}")
 
     def log(self, message: str):
         """添加日志"""

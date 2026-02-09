@@ -5,6 +5,7 @@
     "device": "auto",
     "torch_dtype": "float16",
     "max_new_tokens": 2048,
+    "max_new_tokens_limit": 8192,
     "use_local_only": true,
     "quantization": "8bit"
   },
@@ -23,6 +24,8 @@
   "ui": {
     "theme": "light",
     "font_size": 12,
-    "window_size": "1200x800"
+    "window_size": "1200x800",
+    "language": "简体中文",
+    "screenshot_reminder_disabled": true
   }
 }

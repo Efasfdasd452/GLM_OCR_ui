@@ -17,8 +17,8 @@ def _copy_image_to_clipboard(image: Image.Image):
     bmp_data = output.getvalue()[14:]  # 跳过 14 字节 BMP 文件头
     output.close()
 
-    CF_DIB = 8
-    GMEM_MOVEABLE = 0x0002
+    cf_dib = 8
+    gmem_moveable = 0x0002
 
     kernel32 = ctypes.windll.kernel32
     user32 = ctypes.windll.user32
@@ -36,7 +36,7 @@ def _copy_image_to_clipboard(image: Image.Image):
 
     user32.EmptyClipboard()
 
-    h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(bmp_data))
+    h_mem = kernel32.GlobalAlloc(gmem_moveable, len(bmp_data))
     if not h_mem:
         user32.CloseClipboard()
         raise OSError("GlobalAlloc failed")
@@ -44,7 +44,7 @@ def _copy_image_to_clipboard(image: Image.Image):
     p_mem = kernel32.GlobalLock(h_mem)
     ctypes.memmove(p_mem, bmp_data, len(bmp_data))
     kernel32.GlobalUnlock(h_mem)
-    user32.SetClipboardData(CF_DIB, h_mem)
+    user32.SetClipboardData(cf_dib, h_mem)
     user32.CloseClipboard()
 
 
@@ -100,21 +100,16 @@ class ScreenCapture:
         self._screenshot = ImageGrab.grab()
         phys_w, phys_h = self._screenshot.size
 
-        # tkinter 报告的屏幕尺寸（逻辑分辨率，受 DPI 缩放影响）
-        screen_w = self.parent.winfo_screenwidth()
-        screen_h = self.parent.winfo_screenheight()
+        # 使用物理分辨率，不缩小
+        screen_w = phys_w
+        screen_h = phys_h
 
-        # DPI 缩放系数
-        self._scale_x = phys_w / screen_w
-        self._scale_y = phys_h / screen_h
+        # 不需要缩放，直接使用 1:1 比例
+        self._scale_x = 1.0
+        self._scale_y = 1.0
 
-        # 生成用于显示的版本（逻辑分辨率，匹配 tkinter 坐标）
-        if abs(self._scale_x - 1.0) > 0.01 or abs(self._scale_y - 1.0) > 0.01:
-            self._display_shot = self._screenshot.resize(
-                (screen_w, screen_h), Image.LANCZOS
-            )
-        else:
-            self._display_shot = self._screenshot.copy()
+        # 直接使用原始截图，不缩放
+        self._display_shot = self._screenshot.copy()
 
         # 暗化版本
         dark = self._display_shot.copy().convert("RGBA")

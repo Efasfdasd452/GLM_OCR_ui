@@ -4,10 +4,10 @@ GLM-OCR GUI 主程序入口
 import sys
 from pathlib import Path
 import os
+
 os.environ["TORCH_DISABLE_TORCH_NP"] = "1"
 # 减少 CUDA 显存碎片化
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-# ok ok
 
 # 判断是否为 PyInstaller 打包环境
 if getattr(sys, 'frozen', False):
@@ -20,18 +20,21 @@ else:
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, str(BASE_DIR))
 
-from ui.MainWindow import MainWindow
-
 
 def main():
     """主函数"""
     try:
+        # 直接导入并创建主窗口
+        from ui.MainWindow import MainWindow
+
         app = MainWindow(base_dir=BASE_DIR)
         app.mainloop()
+
     except Exception as e:
         print(f"程序启动失败: {e}")
         import traceback
         traceback.print_exc()
+        input("按任意键退出...")
 
 
 if __name__ == "__main__":

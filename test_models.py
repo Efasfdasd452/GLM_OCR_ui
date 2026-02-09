@@ -15,18 +15,18 @@ def test_model_loading():
     print("=" * 60)
 
     try:
-        MODEL_PATH = "zai-org/GLM-OCR"
+        model_path = "zai-org/GLM-OCR"
 
         print(f"正在加载处理器...")
         # 关键：添加 trust_remote_code=True
         processor = AutoProcessor.from_pretrained(
-            MODEL_PATH
+            model_path
         )
         print(f"✓ 处理器加载成功")
 
         print(f"正在加载模型...")
         model = AutoModelForImageTextToText.from_pretrained(
-            pretrained_model_name_or_path=MODEL_PATH,
+            pretrained_model_name_or_path=model_path,
             torch_dtype="auto",
             device_map="auto",
         )

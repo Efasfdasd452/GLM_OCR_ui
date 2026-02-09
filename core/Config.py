@@ -37,7 +37,9 @@ class Config:
   "ui": {
     "theme": "light",
     "font_size": 12,
-    "window_size": "1200x800"
+    "window_size": "1200x800",
+    "language": "简体中文",
+    "screenshot_reminder_disabled": False
   }
 }
     README_STR = """
