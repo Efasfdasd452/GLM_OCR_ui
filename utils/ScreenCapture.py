@@ -51,18 +51,20 @@ def _copy_image_to_clipboard(image: Image.Image):
 class ScreenCapture:
     """屏幕截图工具：全屏遮罩 + 框选 + 确认/取消"""
 
-    def __init__(self, parent, save_dir="./screenshots", callback=None):
+    def __init__(self, parent, save_dir="./screenshots", callback=None, lang_manager=None):
         """
         Args:
             parent:   父窗口 (tk.Tk / ctk.CTk)
             save_dir: 截图保存目录
             callback: 完成回调 callback(image, save_path)
                       取消时 image=None, save_path=None
+            lang_manager: 语言管理器
         """
         self.parent = parent
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.callback = callback
+        self.lang_manager = lang_manager
 
         # 内部状态
         self._screenshot = None          # 原始截图（物理分辨率）
@@ -137,9 +139,13 @@ class ScreenCapture:
         self._canvas.create_image(0, 0, anchor=tk.NW, image=self._tk_dark)
 
         # 顶部提示
+        hint_text = "拖拽鼠标选择截图区域  |  按 ESC 取消  |  提示: Ctrl+Shift+S 可快速截图"
+        if self.lang_manager:
+            hint_text = self.lang_manager.get("screenshot_hint")
+
         self._canvas.create_text(
             screen_w // 2, 30,
-            text="拖拽鼠标选择截图区域  |  按 ESC 取消  |  提示: Ctrl+Shift+S 可快速截图",
+            text=hint_text,
             fill="white",
             font=("Microsoft YaHei", 13, "bold"),
         )
@@ -249,8 +255,12 @@ class ScreenCapture:
 
         self._btn_frame = tk.Frame(self._canvas, bg="#2b2b2b", bd=0)
 
+        # 获取翻译文本
+        confirm_text = f" ✓ {self.lang_manager.get('confirm')} " if self.lang_manager else " ✓ 确认 "
+        cancel_text = f" ✗ {self.lang_manager.get('cancel')} " if self.lang_manager else " ✗ 取消 "
+
         tk.Button(
-            self._btn_frame, text=" ✓ 确认 ",
+            self._btn_frame, text=confirm_text,
             command=lambda: self._confirm(x1, y1, x2, y2),
             bg="#4CAF50", fg="white", activebackground="#45a049",
             font=("Microsoft YaHei", 10, "bold"),
@@ -258,7 +268,7 @@ class ScreenCapture:
         ).pack(side=tk.LEFT, padx=(4, 8), pady=4)
 
         tk.Button(
-            self._btn_frame, text=" ✗ 取消 ",
+            self._btn_frame, text=cancel_text,
             command=self._cancel,
             bg="#f44336", fg="white", activebackground="#d32f2f",
             font=("Microsoft YaHei", 10, "bold"),

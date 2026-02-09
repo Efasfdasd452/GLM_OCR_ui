@@ -442,6 +442,19 @@ class LanguageManager:
             "ru": "Закрыть"
         },
 
+        # ========== 截图界面提示 ==========
+        "screenshot_hint": {
+            "zh_CN": "拖拽鼠标选择截图区域  |  按 ESC 取消  |  提示: Ctrl+Shift+S 可快速截图哦~",
+            "zh_HK": "拖曳滑鼠選擇截圖區域  |  按 ESC 取消  |  提示: Ctrl+Shift+S 可快速截圖哦~",
+            "zh_TW": "拖曳滑鼠選擇截圖區域  |  按 ESC 取消  |  提示: Ctrl+Shift+S 可快速截圖哦~",
+            "en": "Drag to select area  |  Press ESC to cancel  |  Tip: Ctrl+Shift+S for quick screenshot",
+            "fr": "Faites glisser pour sélectionner  |  ESC pour annuler  |  Astuce: Ctrl+Shift+S pour capture rapide",
+            "de": "Ziehen Sie, um auszuwählen  |  ESC zum Abbrechen  |  Tipp: Ctrl+Shift+S für schnellen Screenshot",
+            "ja": "ドラッグして範囲を選択  |  ESC でキャンセル  |  ヒント: Ctrl+Shift+S で素早くスクリーンショット",
+            "it": "Trascina per selezionare  |  ESC per annullare  |  Suggerimento: Ctrl+Shift+S per screenshot veloce",
+            "ru": "Перетащите для выбора  |  ESC для отмены  |  Совет: Ctrl+Shift+S для быстрого скриншота"
+        },
+
         # ========== 截图成功对话框 ==========
         "screenshot_success_title": {
             "zh_CN": "✓ 截图成功",
@@ -486,6 +499,17 @@ class LanguageManager:
             "ja": "確認",
             "it": "Conferma",
             "ru": "Подтвердить"
+        },
+        "cancel": {
+            "zh_CN": "取消",
+            "zh_HK": "取消",
+            "zh_TW": "取消",
+            "en": "Cancel",
+            "fr": "Annuler",
+            "de": "Abbrechen",
+            "ja": "キャンセル",
+            "it": "Annulla",
+            "ru": "Отмена"
         },
 
         # ========== Toast 提示 ==========

@@ -290,23 +290,23 @@ class MainWindow(ctk.CTk):
         self.tabview.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
         # 单图 OCR 标签页
-        self.tab_single = self.tabview.add("单图OCR")
+        self.tab_single = self.tabview.add(self.lang.get("tab_single_ocr"))
         self.create_single_tab()
 
         # 批量 OCR 标签页
-        self.tab_batch = self.tabview.add("批量OCR")
+        self.tab_batch = self.tabview.add(self.lang.get("tab_batch_ocr"))
         self.create_batch_tab()
 
         # PDF OCR 标签页
-        self.tab_pdf = self.tabview.add("PDF OCR")
+        self.tab_pdf = self.tabview.add(self.lang.get("tab_pdf_ocr"))
         self.create_pdf_tab()
 
         # 二维码生成标签页
-        self.tab_qrgen = self.tabview.add("二维码生成")
+        self.tab_qrgen = self.tabview.add(self.lang.get("tab_qrcode_gen"))
         self.create_qrgen_tab()
 
         # 日志标签页
-        self.tab_log = self.tabview.add("日志")
+        self.tab_log = self.tabview.add(self.lang.get("tab_log"))
         self.create_log_tab()
 
     def create_single_tab(self):
@@ -666,6 +666,7 @@ class MainWindow(ctk.CTk):
             parent=self,
             save_dir=str(screenshots_dir),
             callback=self._on_screenshot_done,
+            lang_manager=self.lang
         )
         capture.start()
 
@@ -766,11 +767,11 @@ class MainWindow(ctk.CTk):
 
     def batch_ocr(self):
         """批量OCR"""
-        self.tabview.set("批量OCR")
+        self.tabview.set(self.lang.get("tab_batch_ocr"))
 
     def folder_ocr(self):
         """文件夹OCR"""
-        self.tabview.set("批量OCR")
+        self.tabview.set(self.lang.get("tab_batch_ocr"))
         self.add_batch_folder()
 
     def pdf_ocr(self):
@@ -787,7 +788,7 @@ class MainWindow(ctk.CTk):
         if not file_path:
             return
 
-        self.tabview.set("PDF OCR")
+        self.tabview.set(self.lang.get("tab_pdf_ocr"))
         self.pdf_path_label.configure(text=file_path)
         self.pdf_result_text.delete("1.0", "end")
         self.pdf_progress_bar.set(0)
