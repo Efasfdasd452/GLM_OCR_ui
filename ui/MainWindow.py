@@ -26,6 +26,12 @@ class MainWindow(ctk.CTk):
     """主窗口类"""
 
     def __init__(self, base_dir=None, api_manager=None):
+        """初始化主窗口
+
+        Args:
+            base_dir: 程序基础目录，默认自动检测
+            api_manager: API 服务器管理器实例
+        """
         super().__init__()
 
         # 基础目录（兼容 PyInstaller 打包）
@@ -111,9 +117,13 @@ class MainWindow(ctk.CTk):
 
     def _font(self, size_offset=0, bold=False):
         """返回统一字体元组
+
         Args:
             size_offset: 相对于基础字体大小的偏移量
             bold: 是否加粗
+
+        Returns:
+            字体元组 (family, size) 或 (family, size, "bold")
         """
         size = self.font_size + size_offset
         if bold:
@@ -1183,7 +1193,11 @@ class MainWindow(ctk.CTk):
         capture.start()
 
     def _show_screenshot_success_dialog(self, save_path):
-        """显示截图成功对话框（带"下次不再提醒"选项）"""
+        """显示截图成功对话框（带"下次不再提醒"选项）
+
+        Args:
+            save_path: 截图保存路径
+        """
         dialog = ctk.CTkToplevel(self)
         dialog.title(self.lang.get("screenshot_success_title"))
         dialog.geometry("450x220")
@@ -1246,7 +1260,12 @@ class MainWindow(ctk.CTk):
         dialog.bind("<Return>", lambda e: on_confirm())
 
     def _on_screenshot_done(self, image, save_path):
-        """截图完成回调"""
+        """截图完成回调
+
+        Args:
+            image: 截图的 PIL Image 对象，取消时为 None
+            save_path: 截图保存路径，取消时为 None
+        """
         if image is None:
             self.log("截图已取消")
             return
@@ -1319,7 +1338,11 @@ class MainWindow(ctk.CTk):
         ).start()
 
     def _pdf_ocr_thread(self, pdf_path):
-        """PDF OCR 后台线程"""
+        """PDF OCR 后台线程
+
+        Args:
+            pdf_path: PDF 文件路径
+        """
         try:
             # 转换 PDF 为图片
             self.log("正在将 PDF 转换为图片...")
@@ -1411,7 +1434,11 @@ class MainWindow(ctk.CTk):
             self.select_image()
 
     def show_image_preview(self, image):
-        """在预览区显示图片"""
+        """在预览区显示图片
+
+        Args:
+            image: PIL Image 对象或图片文件路径
+        """
         from PIL import Image as PILImage
 
         if isinstance(image, (str, Path)):
@@ -1444,7 +1471,11 @@ class MainWindow(ctk.CTk):
             self.recognize_image(file_path)
 
     def _get_prompt_for_current_type(self) -> tuple:
-        """根据当前选择的识别类型返回 (is_qrcode, prompt_string)"""
+        """根据当前选择的识别类型返回提示词信息
+
+        Returns:
+            (is_qrcode, prompt_string) 元组，is_qrcode 表示是否为二维码模式
+        """
         current = self.prompt_type.get()
         # 通过对比翻译文本来反向查找识别类型 key
         type_key_map = {
@@ -1463,7 +1494,11 @@ class MainWindow(ctk.CTk):
         return False, "Text Recognition:"
 
     def recognize_image(self, image):
-        """识别图片（带加载动画）"""
+        """识别图片（带加载动画）
+
+        Args:
+            image: PIL Image 对象或图片文件路径
+        """
         is_qrcode_mode, selected_prompt = self._get_prompt_for_current_type()
 
         if not is_qrcode_mode and not self.model_loaded:
@@ -1543,7 +1578,11 @@ class MainWindow(ctk.CTk):
         threading.Thread(target=recognize_thread, daemon=True).start()
 
     def _show_result(self, text: str):
-        """在结果区显示识别结果（主线程调用）"""
+        """在结果区显示识别结果（主线程调用）
+
+        Args:
+            text: 识别结果文本
+        """
         self.result_text.delete("1.0", "end")
         if text:
             self.result_text.insert("1.0", text)
@@ -1663,11 +1702,19 @@ class MainWindow(ctk.CTk):
         threading.Thread(target=batch_thread, daemon=True).start()
 
     def on_prompt_change(self, value):
-        """提示词类型变化"""
+        """提示词类型变化
+
+        Args:
+            value: 选中的识别类型名称
+        """
         self.log(f"切换识别类型: {value}")
 
     def on_token_change(self, value):
-        """Token 滑块值变化回调"""
+        """Token 滑块值变化回调
+
+        Args:
+            value: 滑块当前值（浮点数）
+        """
         # 滑块返回浮点数，转为整数
         token_value = int(value)
 
@@ -2401,7 +2448,12 @@ class MainWindow(ctk.CTk):
         ).grid(row=15, column=0, columnspan=3, pady=(25, 20))
 
     def _save_language(self, language, parent_win):
-        """保存语言设置"""
+        """保存语言设置
+
+        Args:
+            language: 语言名称
+            parent_win: 父窗口（用于显示 Toast 提示）
+        """
         self.config.set("ui.language", language)
         self.config.save_config()
 
@@ -2417,7 +2469,11 @@ class MainWindow(ctk.CTk):
         self.log(f"界面语言已设置为: {language}")
 
     def log(self, message: str):
-        """添加日志（线程安全）"""
+        """添加日志（线程安全）
+
+        Args:
+            message: 日志消息文本
+        """
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {message}\n"

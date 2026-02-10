@@ -11,7 +11,11 @@ from datetime import datetime
 
 
 def _copy_image_to_clipboard(image: Image.Image):
-    """使用 ctypes 将 PIL Image 复制到 Windows 剪贴板（无需 pywin32）"""
+    """使用 ctypes 将 PIL Image 复制到 Windows 剪贴板（无需 pywin32）
+
+    Args:
+        image: 要复制到剪贴板的 PIL Image 对象
+    """
     output = io.BytesIO()
     image.convert("RGB").save(output, "BMP")
     bmp_data = output.getvalue()[14:]  # 跳过 14 字节 BMP 文件头
@@ -52,12 +56,12 @@ class ScreenCapture:
     """屏幕截图工具：全屏遮罩 + 框选 + 确认/取消"""
 
     def __init__(self, parent, save_dir="./screenshots", callback=None, lang_manager=None):
-        """
+        """初始化屏幕截图工具
+
         Args:
-            parent:   父窗口 (tk.Tk / ctk.CTk)
+            parent: 父窗口 (tk.Tk / ctk.CTk)
             save_dir: 截图保存目录
-            callback: 完成回调 callback(image, save_path)
-                      取消时 image=None, save_path=None
+            callback: 完成回调 callback(image, save_path)，取消时 image=None, save_path=None
             lang_manager: 语言管理器
         """
         self.parent = parent
@@ -169,6 +173,11 @@ class ScreenCapture:
         self._has_selection = False
 
     def _on_press(self, event):
+        """鼠标按下事件，开始框选区域
+
+        Args:
+            event: 鼠标事件对象
+        """
         self._clear_drawing()
         self._start_x = event.x
         self._start_y = event.y
@@ -176,6 +185,11 @@ class ScreenCapture:
         self._overlay.configure(cursor="cross")
 
     def _on_drag(self, event):
+        """鼠标拖动事件，实时更新选区
+
+        Args:
+            event: 鼠标事件对象
+        """
         if not self._selecting:
             return
 
@@ -220,6 +234,11 @@ class ScreenCapture:
         )
 
     def _on_release(self, event):
+        """鼠标释放事件，完成选区并显示操作按钮
+
+        Args:
+            event: 鼠标事件对象
+        """
         if not self._selecting:
             return
         self._selecting = False
@@ -242,7 +261,14 @@ class ScreenCapture:
     # ==================== 按钮 ====================
 
     def _show_buttons(self, x1, y1, x2, y2):
-        """在选区下方显示确认/取消按钮"""
+        """在选区下方显示确认/取消按钮
+
+        Args:
+            x1: 选区左上角 x 坐标
+            y1: 选区左上角 y 坐标
+            x2: 选区右下角 x 坐标
+            y2: 选区右下角 y 坐标
+        """
         self._overlay.configure(cursor="arrow")
 
         btn_x = (x1 + x2) // 2
@@ -288,7 +314,14 @@ class ScreenCapture:
             self._confirm(*self._sel)
 
     def _confirm(self, x1, y1, x2, y2):
-        """确认截图：裁剪 → 保存文件 → 复制到剪贴板"""
+        """确认截图：裁剪 → 保存文件 → 复制到剪贴板
+
+        Args:
+            x1: 选区左上角 x 坐标
+            y1: 选区左上角 y 坐标
+            x2: 选区右下角 x 坐标
+            y2: 选区右下角 y 坐标
+        """
         # 用物理坐标从原始截图裁剪，保证清晰度
         px1 = int(x1 * self._scale_x)
         py1 = int(y1 * self._scale_y)

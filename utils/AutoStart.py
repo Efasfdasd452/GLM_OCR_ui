@@ -10,7 +10,11 @@ APP_NAME = "GLM-OCR"
 
 
 def is_auto_start_enabled() -> bool:
-    """检查是否已设置开机自启"""
+    """检查是否已设置开机自启
+
+    Returns:
+        是否已启用开机自启
+    """
     try:
         import winreg
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY, 0, winreg.KEY_READ)
@@ -55,7 +59,11 @@ def set_auto_start(enable: bool) -> bool:
 
 
 def _get_startup_command() -> str:
-    """获取启动命令（带 --minimized 参数，启动后最小化到托盘）"""
+    """获取启动命令（带 --minimized 参数，启动后最小化到托盘）
+
+    Returns:
+        完整的启动命令字符串
+    """
     if getattr(sys, 'frozen', False):
         # PyInstaller 打包：直接用 EXE 路径
         exe_path = sys.executable

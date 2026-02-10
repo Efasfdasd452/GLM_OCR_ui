@@ -606,17 +606,33 @@ class LanguageManager:
     }
 
     def __init__(self, language="简体中文"):
-        """初始化语言管理器"""
+        """初始化语言管理器
+
+        Args:
+            language: 语言名称，如 "简体中文"、"English"
+        """
         self.current_language = language
         self.current_code = self.LANGUAGES.get(language, "zh_CN")
 
     def set_language(self, language):
-        """设置当前语言"""
+        """设置当前语言
+
+        Args:
+            language: 语言名称，如 "简体中文"、"English"
+        """
         self.current_language = language
         self.current_code = self.LANGUAGES.get(language, "zh_CN")
 
     def get(self, key, *args):
-        """获取翻译文本"""
+        """获取翻译文本
+
+        Args:
+            key: 翻译键名
+            *args: 用于 str.format() 的参数
+
+        Returns:
+            翻译后的文本，未找到则返回 key 本身
+        """
         if key not in self.TRANSLATIONS:
             return key
 
@@ -632,5 +648,9 @@ class LanguageManager:
         return text
 
     def get_code(self):
-        """获取当前语言代码"""
+        """获取当前语言代码
+
+        Returns:
+            语言代码，如 "zh_CN"、"en"
+        """
         return self.current_code

@@ -14,6 +14,7 @@ class ModelManager:
     """单例模式管理 OCREngine"""
 
     def __init__(self):
+        """初始化模型管理器"""
         self.engine: Optional[OCREngine] = None
         self.start_time: float = time.time()
         self.config: Optional[Config] = None

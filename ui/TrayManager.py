@@ -88,13 +88,22 @@ class TrayManager:
             self.icon.update_menu()
 
     def set_api_status(self, running: bool, port: int = None):
-        """更新 API 服务状态"""
+        """更新 API 服务状态
+
+        Args:
+            running: 是否正在运行
+            port: API 服务端口号
+        """
         self.api_running = running
         self._api_port = port
         self.update_menu()
 
     def _build_menu(self):
-        """构建右键菜单"""
+        """构建右键菜单
+
+        Returns:
+            pystray.Menu 菜单对象
+        """
         api_status_text = self._get_api_status_text()
         auto_start_text = "✓ 开机自动启动" if self._auto_start else "  开机自动启动"
 
@@ -114,7 +123,11 @@ class TrayManager:
         )
 
     def _get_api_status_text(self):
-        """获取 API 状态文本"""
+        """获取 API 状态文本
+
+        Returns:
+            API 状态描述字符串
+        """
         if self.api_running:
             port = getattr(self, '_api_port', None)
             if port:
@@ -152,13 +165,21 @@ class TrayManager:
             print(f"切换开机自启失败: {e}")
 
     def _sync_auto_start_config(self, enabled: bool):
-        """同步开机自启配置到 config"""
+        """同步开机自启配置到 config
+
+        Args:
+            enabled: 是否启用开机自启
+        """
         self.app.config.set("ui.auto_start", enabled)
         self.app.config.save_config()
         self.app.log(f"开机自动启动已{'启用' if enabled else '禁用'}")
 
     def set_auto_start_status(self, enabled: bool):
-        """外部更新开机自启状态（如设置页面修改后同步到托盘）"""
+        """外部更新开机自启状态（如设置页面修改后同步到托盘）
+
+        Args:
+            enabled: 是否启用开机自启
+        """
         self._auto_start = enabled
         self.update_menu()
 

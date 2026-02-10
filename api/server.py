@@ -23,7 +23,7 @@ import sys
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan():
     """应用生命周期管理"""
     print("=" * 60)
     print("GLM-OCR API 服务器启动中...")
@@ -99,6 +99,11 @@ app.add_middleware(
 # 自定义 /docs 页面（使用本地静态文件，无需联网）
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui():
+    """返回使用本地静态文件的 Swagger UI 页面
+
+    Returns:
+        Swagger UI HTML 响应
+    """
     return get_swagger_ui_html(
         openapi_url=app.openapi_url,
         title=app.title + " - Swagger UI",
@@ -111,6 +116,11 @@ async def custom_swagger_ui():
 # 自定义 /redoc 页面（使用本地静态文件）
 @app.get("/redoc", include_in_schema=False)
 async def custom_redoc():
+    """返回使用本地静态文件的 ReDoc 页面
+
+    Returns:
+        ReDoc HTML 响应
+    """
     return get_redoc_html(
         openapi_url=app.openapi_url,
         title=app.title + " - ReDoc",
@@ -122,6 +132,11 @@ async def custom_redoc():
 # 根路径跳转到 API 文档
 @app.get("/", include_in_schema=False)
 async def root():
+    """根路径重定向到 API 文档页面
+
+    Returns:
+        重定向到 /docs 的响应
+    """
     return RedirectResponse(url="/docs")
 
 

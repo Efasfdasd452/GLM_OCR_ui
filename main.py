@@ -43,6 +43,7 @@ class APIServerManager:
     """API 服务器管理器，支持启动和停止"""
 
     def __init__(self):
+        """初始化 API 服务器管理器"""
         self.server = None
         self.thread = None
         self.running = False
@@ -53,7 +54,15 @@ class APIServerManager:
 
     @staticmethod
     def _is_port_free(host: str, port: int) -> bool:
-        """检测端口是否空闲"""
+        """检测端口是否空闲
+
+        Args:
+            host: 主机地址
+            port: 端口号
+
+        Returns:
+            端口是否空闲
+        """
         import socket
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -64,7 +73,16 @@ class APIServerManager:
             return False
 
     def _find_free_port(self, host: str, port: int, max_tries: int = 20) -> int:
-        """从指定端口开始，找到第一个空闲端口"""
+        """从指定端口开始，找到第一个空闲端口
+
+        Args:
+            host: 主机地址
+            port: 起始端口号
+            max_tries: 最大尝试次数
+
+        Returns:
+            可用端口号，未找到返回 -1
+        """
         for offset in range(max_tries):
             candidate = port + offset
             if candidate > 65535:
@@ -74,7 +92,15 @@ class APIServerManager:
         return -1
 
     def start(self, host: str, port: int):
-        """在后台线程中启动 API 服务器，自动检测端口冲突"""
+        """在后台线程中启动 API 服务器，自动检测端口冲突
+
+        Args:
+            host: 监听地址
+            port: 监听端口
+
+        Returns:
+            是否启动成功
+        """
         if self.running:
             print(f"API 服务器已在运行 ({self.host}:{self.port})")
             return True
@@ -137,6 +163,11 @@ class APIServerManager:
             print("✓ API 服务器已停止")
 
     def is_running(self):
+        """检查 API 服务器是否正在运行
+
+        Returns:
+            是否运行中
+        """
         return self.running
 
 
@@ -192,7 +223,12 @@ def start_gui(minimized=False):
 
 
 def start_api_server(host: str, port: int):
-    """启动 API 服务器模式（独立运行，阻塞）"""
+    """启动 API 服务器模式（独立运行，阻塞）
+
+    Args:
+        host: 监听地址
+        port: 监听端口
+    """
     try:
         import uvicorn
         from api.server import app
@@ -224,7 +260,12 @@ def start_api_server(host: str, port: int):
 
 
 def start_mixed_mode(host: str, port: int):
-    """启动混合模式（GUI + API 服务器）"""
+    """启动混合模式（GUI + API 服务器）
+
+    Args:
+        host: API 监听地址
+        port: API 监听端口
+    """
     import time
 
     print("=" * 60)

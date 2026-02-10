@@ -144,7 +144,12 @@ class Config:
     _save_lock = threading.Lock()
 
     def __init__(self, config_path: str = None, base_dir: Path = None):
-        """初始化配置"""
+        """初始化配置
+
+        Args:
+            config_path: 配置文件路径，默认为 base_dir/config.json
+            base_dir: 程序基础目录，默认自动检测
+        """
         import sys
         self.is_frozen = getattr(sys, 'frozen', False)
 
@@ -257,7 +262,15 @@ class Config:
                 return False
 
     def _merge_config(self, default: Dict, loaded: Dict) -> Dict:
-        """递归合并配置"""
+        """递归合并配置，loaded 中的值覆盖 default
+
+        Args:
+            default: 默认配置字典
+            loaded: 加载的配置字典
+
+        Returns:
+            合并后的配置字典
+        """
         for key, value in loaded.items():
             if key in default and isinstance(default[key], dict) and isinstance(value, dict):
                 default[key] = self._merge_config(default[key], value)
@@ -266,7 +279,15 @@ class Config:
         return default
 
     def get(self, key_path: str, default=None):
-        """获取配置值"""
+        """获取配置值，支持点分路径
+
+        Args:
+            key_path: 配置键路径，如 "model.device"
+            default: 键不存在时的默认值
+
+        Returns:
+            配置值，不存在则返回 default
+        """
         keys = key_path.split('.')
         value = self.config
         for key in keys:
@@ -277,7 +298,12 @@ class Config:
         return value
 
     def set(self, key_path: str, value):
-        """设置配置值（线程安全）"""
+        """设置配置值（线程安全），支持点分路径
+
+        Args:
+            key_path: 配置键路径，如 "model.device"
+            value: 要设置的值
+        """
         with self._save_lock:
             keys = key_path.split('.')
             config = self.config
