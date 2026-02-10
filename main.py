@@ -9,6 +9,15 @@ import os
 import argparse
 import threading
 
+# 修复 PyInstaller --noconsole 模式：Windows 下 stdout/stderr/stdin 为 None
+# 重定向到 devnull 防止 print() 和日志写入时崩溃
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+if sys.stdin is None:
+    sys.stdin = open(os.devnull, 'r')
+
 os.environ["TORCH_DISABLE_TORCH_NP"] = "1"
 # 减少 CUDA 显存碎片化（仅 Linux 支持 expandable_segments）
 if sys.platform != "win32":

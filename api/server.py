@@ -2,6 +2,7 @@
 GLM-OCR API 服务器
 基于 FastAPI 的 RESTful API
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -10,6 +11,7 @@ from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import time
+import threading
 from typing import Optional
 
 from api.models import RecognizeRequest, RecognizeResponse, ModelStatusResponse, HealthResponse
@@ -20,13 +22,63 @@ from pathlib import Path
 import sys
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    print("=" * 60)
+    print("GLM-OCR API 服务器启动中...")
+    print("=" * 60)
+
+    # 加载配置
+    manager = get_model_manager()
+
+    # 查找配置文件
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(sys.executable).parent
+    else:
+        base_dir = Path(__file__).parent.parent
+
+    config_path = base_dir / "config.json"
+    config = Config(str(config_path), base_dir=base_dir)
+
+    # 如果配置要求自动加载模型，在后台线程中加载（不阻塞端口启动）
+    if config.get("api.auto_load_model", True):
+        def _load_model_background():
+            print("正在后台加载模型...")
+            success = manager.load_model(config)
+            if success:
+                print("✓ 模型加载成功，API 已就绪")
+            else:
+                print("⚠ 模型加载失败，请手动调用 /api/model/load")
+
+        threading.Thread(target=_load_model_background, daemon=True).start()
+    else:
+        print("自动加载已禁用，请手动调用 /api/model/load")
+
+    print("=" * 60)
+    print("API 服务器已启动，端口已开放")
+    print(f"API 文档: http://127.0.0.1:8000/docs")
+    print("模型正在后台加载中..." if config.get("api.auto_load_model", True) else "")
+    print("=" * 60)
+
+    yield
+
+    # 关闭时清理
+    print("正在关闭 API 服务器...")
+    manager = get_model_manager()
+    manager.unload_model()
+    executor.shutdown(wait=False)
+    print("✓ API 服务器已关闭")
+
+
 # 创建 FastAPI 应用（禁用默认 CDN 文档，改用本地静态文件）
 app = FastAPI(
     title="GLM-OCR API",
     description="GLM-OCR 图片识别 API 服务",
     version="1.0.0",
     docs_url=None,
-    redoc_url=None
+    redoc_url=None,
+    lifespan=lifespan
 )
 
 # 挂载本地静态文件（Swagger UI JS/CSS/favicon）
@@ -79,57 +131,6 @@ executor = ThreadPoolExecutor(max_workers=4)
 # 并发控制（防止 GPU OOM）
 inference_semaphore = asyncio.Semaphore(2)  # 最多 2 个并发推理
 
-
-@app.on_event("startup")
-async def startup_event():
-    """启动时初始化"""
-    import threading
-
-    print("=" * 60)
-    print("GLM-OCR API 服务器启动中...")
-    print("=" * 60)
-
-    # 加载配置
-    manager = get_model_manager()
-
-    # 查找配置文件
-    if getattr(sys, 'frozen', False):
-        base_dir = Path(sys.executable).parent
-    else:
-        base_dir = Path(__file__).parent.parent
-
-    config_path = base_dir / "config.json"
-    config = Config(str(config_path), base_dir=base_dir)
-
-    # 如果配置要求自动加载模型，在后台线程中加载（不阻塞端口启动）
-    if config.get("api.auto_load_model", True):
-        def _load_model_background():
-            print("正在后台加载模型...")
-            success = manager.load_model(config)
-            if success:
-                print("✓ 模型加载成功，API 已就绪")
-            else:
-                print("⚠ 模型加载失败，请手动调用 /api/model/load")
-
-        threading.Thread(target=_load_model_background, daemon=True).start()
-    else:
-        print("自动加载已禁用，请手动调用 /api/model/load")
-
-    print("=" * 60)
-    print("API 服务器已启动，端口已开放")
-    print(f"API 文档: http://127.0.0.1:8000/docs")
-    print("模型正在后台加载中..." if config.get("api.auto_load_model", True) else "")
-    print("=" * 60)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理"""
-    print("正在关闭 API 服务器...")
-    manager = get_model_manager()
-    manager.unload_model()
-    executor.shutdown(wait=False)
-    print("✓ API 服务器已关闭")
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["系统"])
