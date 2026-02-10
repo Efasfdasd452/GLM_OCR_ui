@@ -206,7 +206,7 @@ class Config:
                 self.config["model"]["local_path"] = str(path.absolute())
                 return
 
-        print("⚠ 未检测到本地模型，将从 HuggingFace 下载")
+        print("未检测到本地模型，将从 HuggingFace 下载")
 
     def get_model_path(self) -> str:
         """获取模型路径（优先返回本地路径）"""
@@ -227,14 +227,14 @@ class Config:
                 print(f"加载配置失败: {e}, 使用默认配置")
                 config = copy.deepcopy(self.DEFAULT_CONFIG)
         else:
-            print(f"⚠ 未找到配置文件: {self.config_path}，自动创建默认配置")
+            print(f"未找到配置文件: {self.config_path}，自动创建默认配置")
             config = copy.deepcopy(self.DEFAULT_CONFIG)
             try:
                 with open(self.config_path, 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
                 print(f"✓ 已创建默认配置文件: {self.config_path}")
             except OSError as e:
-                print(f"⚠ 创建配置文件失败: {e}")
+                print(f"创建配置文件失败: {e}")
 
         # 写 readme 文件（独立于配置加载，失败不影响主流程）
         self._write_readme_files()

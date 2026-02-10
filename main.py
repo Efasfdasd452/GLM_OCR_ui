@@ -9,14 +9,55 @@ import os
 import argparse
 import threading
 
-# 修复 PyInstaller --noconsole 模式：Windows 下 stdout/stderr/stdin 为 None
-# 重定向到 devnull 防止 print() 和日志写入时崩溃
-if sys.stdout is None:
-    sys.stdout = open(os.devnull, 'w')
-if sys.stderr is None:
-    sys.stderr = open(os.devnull, 'w')
-if sys.stdin is None:
-    sys.stdin = open(os.devnull, 'r')
+# 修复 PyInstaller --windowed/--noconsole 模式：
+# stdout/stderr 可能为 None、无 buffer 属性、或使用 GBK 编码导致 Unicode 字符输出崩溃
+# 无控制台时将日志写入程序目录下的 glm_ocr.log，方便排查问题
+def _fix_stdio():
+    import io
+
+    # 判断是否需要重定向（stdout 为 None 说明没有控制台）
+    needs_redirect = sys.stdout is None or sys.stderr is None
+
+    if needs_redirect:
+        # 确定日志文件路径：EXE 同目录
+        if getattr(sys, 'frozen', False):
+            log_dir = Path(sys.executable).parent
+        else:
+            log_dir = Path(__file__).parent
+        log_path = log_dir / "glm_ocr.log"
+
+        try:
+            log_file = open(log_path, 'a', encoding='utf-8', buffering=1)
+        except OSError:
+            log_file = open(os.devnull, 'w', encoding='utf-8')
+
+        if sys.stdout is None:
+            sys.stdout = log_file
+        if sys.stderr is None:
+            sys.stderr = log_file
+    else:
+        # 有控制台但编码不是 UTF-8（如 GBK），包装为 UTF-8 流
+        for name in ('stdout', 'stderr'):
+            stream = getattr(sys, name)
+            try:
+                encoding = getattr(stream, 'encoding', None) or ''
+                if encoding.lower().replace('-', '') != 'utf8':
+                    buf = getattr(stream, 'buffer', None)
+                    if buf is not None:
+                        setattr(sys, name, io.TextIOWrapper(
+                            buf, encoding='utf-8', errors='replace', line_buffering=True))
+            except Exception:
+                pass
+
+    if sys.stdin is None:
+        sys.stdin = open(os.devnull, 'r')
+_fix_stdio()
+del _fix_stdio
+
+# 启动日志标记（方便在 glm_ocr.log 中区分不同次运行）
+from datetime import datetime as _dt
+print(f"\n{'=' * 60}\nGLM-OCR 启动  {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'=' * 60}")
+del _dt
 
 os.environ["TORCH_DISABLE_TORCH_NP"] = "1"
 # 减少 CUDA 显存碎片化（仅 Linux 支持 expandable_segments）
@@ -126,11 +167,15 @@ class APIServerManager:
             import uvicorn
             from api.server import app
 
+            # --windowed 模式下禁用 uvicorn 默认日志配置，避免其内部
+            # 创建 StreamHandler 时因 stdout/stderr 异常而崩溃
+            log_cfg = None if getattr(sys, 'frozen', False) else uvicorn.config.LOGGING_CONFIG
             config = uvicorn.Config(
                 app,
                 host=host,
                 port=port,
-                log_level="info"
+                log_level="info",
+                log_config=log_cfg
             )
             self.server = uvicorn.Server(config)
 
@@ -142,7 +187,7 @@ class APIServerManager:
         except ImportError as e:
             print(f"✗ API 启动失败: 缺少依赖库 - {e}")
             return False
-        except (OSError, RuntimeError) as e:
+        except Exception as e:
             print(f"✗ API 服务器启动失败: {e}")
             return False
 
@@ -150,7 +195,7 @@ class APIServerManager:
         """运行服务器（在线程中）"""
         try:
             self.server.run()
-        except (OSError, RuntimeError) as e:
+        except Exception as e:
             print(f"✗ API 服务器异常退出: {e}")
         finally:
             self.running = False
@@ -240,11 +285,13 @@ def start_api_server(host: str, port: int):
         print(f"API 文档: http://{host}:{port}/docs")
         print("=" * 60)
 
+        log_cfg = None if getattr(sys, 'frozen', False) else uvicorn.config.LOGGING_CONFIG
         uvicorn.run(
             app,
             host=host,
             port=port,
-            log_level="info"
+            log_level="info",
+            log_config=log_cfg
         )
     except ImportError as e:
         print(f"✗ 启动失败: 缺少依赖库")

@@ -23,7 +23,7 @@ import sys
 
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan(app):
     """应用生命周期管理"""
     print("=" * 60)
     print("GLM-OCR API 服务器启动中...")

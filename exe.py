@@ -19,7 +19,7 @@ def build_exe():
         '--name=GLM-OCR',  # 程序名称
         #'--onefile',  # 打包成单个文件（不推荐，太大）
         '--onedir',                       # 推荐：打包成文件夹
-        '--console',  # 无控制台窗口
+        '--windowed',  # 无控制台窗口
         '--icon=icon.ico',  # 图标（如果有）
         '--add-data=models;models',  # 包含模型文件夹
         '--add-data=core;core',  # 包含核心模块
