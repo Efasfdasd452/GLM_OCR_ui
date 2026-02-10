@@ -25,7 +25,7 @@ def is_auto_start_enabled() -> bool:
             return False
         finally:
             winreg.CloseKey(key)
-    except Exception:
+    except (ImportError, OSError):
         return False
 
 

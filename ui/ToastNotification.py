@@ -2,6 +2,8 @@
 Toast 通知组件
 悬浮气泡提示
 """
+import tkinter as tk
+
 import customtkinter as ctk
 
 
@@ -28,7 +30,7 @@ class ToastNotification:
         # 设置透明度（Windows）
         try:
             toast.attributes("-alpha", 0.95)
-        except:
+        except tk.TclError:
             pass
 
         # 创建标签
@@ -70,21 +72,23 @@ class ToastNotification:
 
         # 淡入效果
         def fade_in(alpha=0.0):
+            """逐步增加窗口透明度，实现淡入动画效果。"""
             if alpha < 0.95:
                 alpha += 0.1
                 try:
                     toast.attributes("-alpha", alpha)
-                except:
+                except tk.TclError:
                     pass
                 toast.after(20, lambda: fade_in(alpha))
 
         # 淡出效果
         def fade_out(alpha=0.95):
+            """逐步降低窗口透明度，结束后销毁窗口。"""
             if alpha > 0:
                 alpha -= 0.1
                 try:
                     toast.attributes("-alpha", alpha)
-                except:
+                except tk.TclError:
                     pass
                 toast.after(20, lambda: fade_out(alpha))
             else:

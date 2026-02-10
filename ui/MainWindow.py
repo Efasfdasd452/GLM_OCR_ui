@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+import httpx
 import customtkinter as ctk
 
 from core.Config import Config
@@ -705,7 +706,7 @@ class MainWindow(ctk.CTk):
     # ==================== 加载动画 ====================
 
     def _start_loading_animation(self):
-        """开始识别加载动画"""
+        """开始识别加载动画，清空结果区并禁用按钮防止重复操作。"""
         self._recognizing = True
         self._loading_dots = 0
         # 清空结果区
@@ -863,13 +864,13 @@ class MainWindow(ctk.CTk):
         if not self._using_local_api and self.ocr_engine:
             try:
                 self.ocr_engine.unload_model()
-            except Exception:
+            except (RuntimeError, OSError):
                 pass
         # 退出主循环
         self.destroy()
 
     def start_api_server(self):
-        """启动 API 服务器"""
+        """启动 API 服务器，成功后自动切换到本地 API 模式以避免重复加载模型。"""
         if not self.api_manager:
             from main import api_server_manager
             self.api_manager = api_server_manager
@@ -899,7 +900,7 @@ class MainWindow(ctk.CTk):
             self.log("✗ API 服务器启动失败")
 
     def stop_api_server(self):
-        """停止 API 服务器"""
+        """停止 API 服务器并重置本地 API 模式状态。"""
         if self.api_manager and self.api_manager.is_running():
             self.api_manager.stop()
             self.log("✓ API 服务器已停止")
@@ -932,7 +933,7 @@ class MainWindow(ctk.CTk):
     # ==================== 功能方法 ====================
 
     def toggle_model(self):
-        """加载/卸载模型"""
+        """根据当前模型状态切换加载或卸载操作。"""
         if not self.model_loaded:
             self.load_model()
         else:
@@ -1018,7 +1019,7 @@ class MainWindow(ctk.CTk):
                 return
             # 模型尚未加载但 API 正常响应，重置错误计数
             self._api_poll_errors = 0
-        except Exception:
+        except (httpx.HTTPError, OSError):
             self._api_poll_errors += 1
             # 连续失败超过 15 次（约 30 秒）则停止轮询
             if self._api_poll_errors >= 15:
@@ -1032,7 +1033,7 @@ class MainWindow(ctk.CTk):
         self._api_poll_id = self.after(2000, self._poll_api_model_status)
 
     def _load_model_via_api(self):
-        """通过本地 API 加载模型"""
+        """通过本地 API 触发模型加载，在后台线程中执行。"""
         def load_thread():
             self.after(0, lambda: self.btn_load_model.configure(state="disabled", text="加载中..."))
             self.after(0, lambda: self.model_status_label.configure(
@@ -1061,7 +1062,7 @@ class MainWindow(ctk.CTk):
                         self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
                         self.log(f"✗ API 模型加载失败: {msg}")
                     self.after(0, on_fail)
-            except Exception as e:
+            except (httpx.HTTPError, OSError) as e:
                 err = str(e)
                 def on_error():
                     self.model_status_label.configure(text="API 模型加载失败", text_color="red")
@@ -1072,7 +1073,7 @@ class MainWindow(ctk.CTk):
         threading.Thread(target=load_thread, daemon=True).start()
 
     def _unload_model_via_api(self):
-        """通过本地 API 卸载模型"""
+        """向本地 API 发送卸载请求释放模型资源。"""
         try:
             response = self.ocr_service.client.post(
                 f"{self.ocr_service.base_url}/api/model/unload",
@@ -1088,11 +1089,11 @@ class MainWindow(ctk.CTk):
                 self.log("✓ API 模型已卸载")
             else:
                 self.log(f"✗ API 模型卸载失败: {data.get('detail', '未知错误')}")
-        except Exception as e:
+        except (httpx.HTTPError, OSError) as e:
             self.log(f"✗ API 模型卸载失败: {e}")
 
     def load_model(self):
-        """加载模型"""
+        """根据当前模式（本地 API / 远程 / 本地）加载 OCR 模型。"""
         # 如果通过本地 API 模式，调用 API 加载或重新轮询
         if self._using_local_api:
             self._api_poll_errors = 0
@@ -1157,7 +1158,7 @@ class MainWindow(ctk.CTk):
         threading.Thread(target=load_thread, daemon=True).start()
 
     def unload_model(self):
-        """卸载模型"""
+        """根据当前模式（本地 API / 远程 / 本地）卸载或断开 OCR 模型。"""
         # 本地 API 模式：通过 API 卸载
         if self._using_local_api:
             self._unload_model_via_api()
@@ -1182,7 +1183,7 @@ class MainWindow(ctk.CTk):
         self.log("模型已卸载")
 
     def screenshot_ocr(self):
-        """截图"""
+        """启动截图工具进行屏幕截图，截图完成后自动进行 OCR 识别。"""
         screenshots_dir = self.base_dir / "screenshots"
         capture = ScreenCapture(
             parent=self,
@@ -1283,7 +1284,7 @@ class MainWindow(ctk.CTk):
             self.recognize_image(image)
 
     def clipboard_ocr(self):
-        """剪贴板OCR"""
+        """从剪贴板获取图片并进行 OCR 识别。如果模型未加载会提示警告。"""
         if not self.model_loaded:
             messagebox.showwarning("警告", "请先加载模型")
             return
@@ -1301,16 +1302,16 @@ class MainWindow(ctk.CTk):
         self.recognize_image(image)
 
     def batch_ocr(self):
-        """批量OCR"""
+        """切换到批量 OCR 标签页。"""
         self.tabview.set(self.lang.get("tab_batch_ocr"))
 
     def folder_ocr(self):
-        """文件夹OCR"""
+        """切换到批量 OCR 标签页并打开文件夹选择对话框。"""
         self.tabview.set(self.lang.get("tab_batch_ocr"))
         self.add_batch_folder()
 
     def pdf_ocr(self):
-        """PDF 文档 OCR"""
+        """选择 PDF 文件并启动后台线程逐页进行 OCR 识别。"""
         if not self.model_loaded:
             messagebox.showwarning("警告", "请先加载模型")
             return
@@ -1400,7 +1401,7 @@ class MainWindow(ctk.CTk):
         except ImportError as e:
             self.log(f"✗ 依赖缺失: {e}")
             self.after(0, lambda _e=str(e): messagebox.showerror("依赖缺失", _e))
-        except Exception as e:
+        except (RuntimeError, OSError) as e:
             self.log(f"✗ PDF OCR 失败: {e}")
             self.after(0, lambda _e=str(e): messagebox.showerror("错误", f"PDF OCR 失败:\n{_e}"))
 
@@ -1422,12 +1423,12 @@ class MainWindow(ctk.CTk):
                     f.write(self._pdf_result_content)
                 self.log(f"✓ 结果已保存: {file_path}")
                 messagebox.showinfo("保存成功", f"结果已保存到:\n{file_path}")
-            except Exception as e:
+            except OSError as e:
                 self.log(f"✗ 保存失败: {e}")
                 messagebox.showerror("错误", f"保存失败: {e}")
 
     def quick_ocr(self):
-        """快速OCR"""
+        """快速 OCR 入口：若剪贴板有图片则直接识别，否则弹出文件选择对话框。"""
         if ClipboardUtils.has_image():
             self.clipboard_ocr()
         else:
@@ -1588,7 +1589,7 @@ class MainWindow(ctk.CTk):
             self.result_text.insert("1.0", text)
 
     def copy_result(self):
-        """复制结果"""
+        """将识别结果文本复制到系统剪贴板。"""
         text = self.result_text.get("1.0", "end-1c")
         if text.strip():
             ClipboardUtils.set_text_to_clipboard(text)
@@ -1597,7 +1598,7 @@ class MainWindow(ctk.CTk):
             messagebox.showwarning("警告", "没有可复制的内容")
 
     def add_batch_files(self):
-        """添加批量文件"""
+        """打开文件选择对话框，添加图片文件到批量处理列表。"""
         files = filedialog.askopenfilenames(
             title="选择图片文件",
             filetypes=[
@@ -1614,7 +1615,7 @@ class MainWindow(ctk.CTk):
             self.log(f"添加了 {len(files)} 个文件")
 
     def add_batch_folder(self):
-        """添加文件夹"""
+        """打开文件夹选择对话框，扫描并添加其中的图片文件到批量列表。"""
         folder = filedialog.askdirectory(title="选择文件夹")
 
         if folder:
@@ -1630,7 +1631,7 @@ class MainWindow(ctk.CTk):
             self.log(f"从文件夹添加了 {len(files)} 个文件")
 
     def clear_batch_list(self):
-        """清空批量列表"""
+        """清空批量处理的文件列表并更新显示。"""
         self.batch_files = []
         self.update_batch_list()
         self.log("已清空文件列表")
@@ -1642,7 +1643,7 @@ class MainWindow(ctk.CTk):
             self.file_listbox.insert("end", f"{i}. {file}\n")
 
     def start_batch_ocr(self):
-        """开始批量识别"""
+        """启动后台线程对批量文件列表中的所有图片依次进行 OCR 识别。"""
         if not self.model_loaded:
             messagebox.showwarning("警告", "请先加载模型")
             return
@@ -1777,7 +1778,7 @@ class MainWindow(ctk.CTk):
             ToastNotification.show(self, "✗ Invalid number", duration=2000)
 
     def open_settings(self):
-        """打开设置窗口"""
+        """打开设置窗口，包含语言、字体、输出目录、API 配置等选项。"""
         settings_win = ctk.CTkToplevel(self)
         settings_win.title(self.lang.get("settings_title"))
         settings_win.geometry("580x980")

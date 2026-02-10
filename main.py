@@ -142,7 +142,7 @@ class APIServerManager:
         except ImportError as e:
             print(f"✗ API 启动失败: 缺少依赖库 - {e}")
             return False
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             print(f"✗ API 服务器启动失败: {e}")
             return False
 
@@ -150,7 +150,7 @@ class APIServerManager:
         """运行服务器（在线程中）"""
         try:
             self.server.run()
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             print(f"✗ API 服务器异常退出: {e}")
         finally:
             self.running = False
@@ -340,7 +340,7 @@ def main():
         config = Config(str(BASE_DIR / "config.json"), base_dir=BASE_DIR)
         default_host = config.get("api.host", "127.0.0.1")
         default_port = config.get("api.port", 8000)
-    except Exception:
+    except (ImportError, OSError, RuntimeError):
         default_host = "127.0.0.1"
         default_port = 8000
 
@@ -357,7 +357,7 @@ def main():
         # 读取配置的启动模式
         try:
             startup_mode = config.get("app.startup_mode", "ui")
-        except Exception:
+        except (NameError, AttributeError):
             startup_mode = "ui"
 
         if startup_mode == "api":

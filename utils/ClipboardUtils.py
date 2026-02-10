@@ -35,7 +35,7 @@ class ClipboardUtils:
                 if len(image) > 0 and isinstance(image[0], str):
                     try:
                         return Image.open(image[0]).convert('RGB')
-                    except Exception:
+                    except (OSError, Image.DecompressionBombError):
                         return None
 
             return None
@@ -68,7 +68,7 @@ class ClipboardUtils:
 
             return False
 
-        except Exception:
+        except OSError:
             return False
 
     @staticmethod

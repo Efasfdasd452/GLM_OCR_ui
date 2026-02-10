@@ -642,7 +642,7 @@ class LanguageManager:
         if args:
             try:
                 text = text.format(*args)
-            except:
+            except (IndexError, KeyError):
                 pass
 
         return text

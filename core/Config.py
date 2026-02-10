@@ -223,7 +223,7 @@ class Config:
                     loaded_config = json.load(f)
                 print(f"✓ 已加载配置文件: {self.config_path}")
                 config = self._merge_config(copy.deepcopy(self.DEFAULT_CONFIG), loaded_config)
-            except Exception as e:
+            except (json.JSONDecodeError, OSError) as e:
                 print(f"加载配置失败: {e}, 使用默认配置")
                 config = copy.deepcopy(self.DEFAULT_CONFIG)
         else:
@@ -233,7 +233,7 @@ class Config:
                 with open(self.config_path, 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
                 print(f"✓ 已创建默认配置文件: {self.config_path}")
-            except Exception as e:
+            except OSError as e:
                 print(f"⚠ 创建配置文件失败: {e}")
 
         # 写 readme 文件（独立于配置加载，失败不影响主流程）
@@ -247,7 +247,7 @@ class Config:
                 f.write(self.README_STR)
             with open(self.readme_path_gbk, 'w', encoding='gbk') as f:
                 f.write(self.README_STR)
-        except Exception:
+        except OSError:
             pass
 
     def save_config(self) -> bool:
@@ -257,7 +257,7 @@ class Config:
                 with open(self.config_path, 'w', encoding='utf-8') as f:
                     json.dump(self.config, f, indent=2, ensure_ascii=False)
                 return True
-            except Exception as e:
+            except OSError as e:
                 print(f"保存配置失败: {e}")
                 return False
 

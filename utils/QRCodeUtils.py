@@ -39,7 +39,7 @@ class QRCodeUtils:
                     "type": obj.type
                 })
             return results
-        except Exception as e:
+        except (RuntimeError, OSError) as e:
             print(f"二维码解码失败: {e}")
             return []
 

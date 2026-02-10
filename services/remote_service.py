@@ -179,5 +179,5 @@ class RemoteOCRService(OCRService):
         """析构时关闭 HTTP 客户端"""
         try:
             self.close()
-        except Exception:
+        except (httpx.HTTPError, RuntimeError, OSError):
             pass

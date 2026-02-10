@@ -95,7 +95,7 @@ class PDFUtils:
         try:
             info = pdfinfo_from_path(str(pdf_path), poppler_path=poppler_path)
             return info["Pages"]
-        except Exception:
+        except (RuntimeError, OSError, KeyError):
             images = PDFUtils.pdf_to_images(pdf_path, dpi=72)
             count = len(images)
             for img in images:

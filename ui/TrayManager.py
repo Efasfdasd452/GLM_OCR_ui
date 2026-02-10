@@ -43,7 +43,7 @@ class TrayManager:
         try:
             from utils.AutoStart import is_auto_start_enabled
             self._auto_start = is_auto_start_enabled()
-        except Exception:
+        except (ImportError, OSError):
             pass
 
         # 加载图标
@@ -77,7 +77,7 @@ class TrayManager:
         if self.icon:
             try:
                 self.icon.stop()
-            except Exception:
+            except (RuntimeError, OSError):
                 pass
             self.icon = None
 

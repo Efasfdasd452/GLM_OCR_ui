@@ -65,7 +65,7 @@ class FileUtils:
             with Image.open(image_path) as img:
                 img.verify()
             return True
-        except Exception:
+        except (OSError, SyntaxError):
             return False
 
     @staticmethod
