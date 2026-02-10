@@ -24,7 +24,7 @@
   "ui": {
     "theme": "light",
     "font_family": "Microsoft YaHei UI",
-    "font_size": 20,
+    "font_size": 12,
     "window_size": "1200x800",
     "language": "简体中文",
     "screenshot_reminder_disabled": true,

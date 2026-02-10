@@ -2,9 +2,9 @@
 剪贴板工具模块
 处理剪贴板图片和文本
 """
-import io
-from PIL import Image, ImageGrab
 from typing import Optional
+
+from PIL import Image, ImageGrab
 
 
 class ClipboardUtils:
@@ -127,7 +127,7 @@ class ClipboardUtils:
 
                 if platform.system() == 'Darwin':  # macOS
                     # 使用 pbcopy
-                    process = subprocess.Popen(
+                    subprocess.Popen(
                         ['osascript', '-e', 'set the clipboard to (read (POSIX file "' +
                          str(image) + '") as JPEG picture)'],
                         stdin=subprocess.PIPE

@@ -303,7 +303,7 @@ def _recognize_sync(
 
 
 @app.exception_handler(413)
-async def request_entity_too_large_handler(request, exc):
+async def request_entity_too_large_handler():
     """处理请求过大异常"""
     return JSONResponse(
         status_code=413,

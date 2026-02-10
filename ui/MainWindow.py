@@ -2,24 +2,24 @@
 主界面模块
 使用 CustomTkinter 构建现代化 UI
 """
-import customtkinter as ctk
-from tkinter import filedialog, messagebox
-from pathlib import Path
 import threading
-import io
+from pathlib import Path
+from tkinter import filedialog, messagebox
+
+import customtkinter as ctk
 
 from core.Config import Config
 from core.OCREngine import OCREngine
-from utils.FileUtils import FileUtils
-from utils.ClipboardUtils import ClipboardUtils
-from utils.QRCodeUtils import QRCodeUtils
-from utils.ScreenCapture import ScreenCapture
-from utils.PDFUtils import PDFUtils
-from ui.ToastNotification import ToastNotification
-from ui.LanguageManager import LanguageManager
 from services.local_service import LocalOCRService
 from services.remote_service import RemoteOCRService
+from ui.LanguageManager import LanguageManager
+from ui.ToastNotification import ToastNotification
 from ui.TrayManager import TrayManager
+from utils.ClipboardUtils import ClipboardUtils
+from utils.FileUtils import FileUtils
+from utils.PDFUtils import PDFUtils
+from utils.QRCodeUtils import QRCodeUtils
+from utils.ScreenCapture import ScreenCapture
 
 
 class MainWindow(ctk.CTk):
@@ -117,8 +117,8 @@ class MainWindow(ctk.CTk):
         """
         size = self.font_size + size_offset
         if bold:
-            return (self.font_family, size, "bold")
-        return (self.font_family, size)
+            return self.font_family, size, "bold"
+        return self.font_family, size
 
     def apply_font_settings(self):
         """应用字体设置到所有 UI 组件"""
@@ -1616,11 +1616,11 @@ class MainWindow(ctk.CTk):
             total = len(self.batch_files)
             self.log(f"开始批量识别 {total} 个文件...")
 
-            def progress_callback(current, total, result):
-                progress = current / total
+            def progress_callback(current, totals):
+                progress = current / totals
                 self.progress_bar.set(progress)
-                self.progress_label.configure(text=f"进度: {current}/{total}")
-                self.log(f"[{current}/{total}] 识别完成")
+                self.progress_label.configure(text=f"进度: {current}/{totals}")
+                self.log(f"[{current}/{totals}] 识别完成")
 
             _, prompt = self._get_prompt_for_current_type()
 
@@ -1688,7 +1688,7 @@ class MainWindow(ctk.CTk):
         # 记录日志
         self.log(f"Token 值调整为: {token_value}")
 
-    def on_token_entry_change(self, event=None):
+    def on_token_entry_change(self):
         """Token 输入框值变化回调"""
         try:
             # 获取用户输入
@@ -1862,7 +1862,7 @@ class MainWindow(ctk.CTk):
             toast_text = self.lang.get("toast_font_saved")
             ToastNotification.show(settings_win, f"{toast_text} {val}px", duration=1500)
 
-        def _on_font_size_entry(event=None):
+        def _on_font_size_entry():
             try:
                 val = int(font_size_var.get().strip())
                 _on_font_size_change(val)

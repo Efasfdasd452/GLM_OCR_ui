@@ -122,22 +122,22 @@ class TrayManager:
             return "API 服务运行中"
         return "API 服务已停止"
 
-    def _on_show(self, icon=None, item=None):
+    def _on_show(self):
         """显示主窗口"""
         self.app.after(0, self.app.show_window)
 
-    def _on_hide(self, icon=None, item=None):
+    def _on_hide(self):
         """隐藏主窗口"""
         self.app.after(0, self.app.hide_window)
 
-    def _on_toggle_api(self, icon=None, item=None):
+    def _on_toggle_api(self):
         """启动/停止 API 服务"""
         if self.api_running:
             self.app.after(0, self.app.stop_api_server)
         else:
             self.app.after(0, self.app.start_api_server)
 
-    def _on_toggle_auto_start(self, icon=None, item=None):
+    def _on_toggle_auto_start(self):
         """切换开机自启"""
         try:
             from utils.AutoStart import set_auto_start
@@ -162,6 +162,6 @@ class TrayManager:
         self._auto_start = enabled
         self.update_menu()
 
-    def _on_quit(self, icon=None, item=None):
+    def _on_quit(self):
         """退出程序"""
         self.app.after(0, self.app.quit_app)

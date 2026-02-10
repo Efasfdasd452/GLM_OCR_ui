@@ -2,12 +2,12 @@
 API 依赖注入
 全局管理 OCREngine 实例
 """
-from typing import Optional
-from core.OCREngine import OCREngine
-from core.Config import Config
-from pathlib import Path
-import time
 import threading
+import time
+from typing import Optional
+
+from core.Config import Config
+from core.OCREngine import OCREngine
 
 
 class ModelManager:

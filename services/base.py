@@ -4,7 +4,6 @@ OCR 服务抽象基类
 """
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict
-from PIL import Image
 
 
 class OCRService(ABC):

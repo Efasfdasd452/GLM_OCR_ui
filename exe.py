@@ -24,10 +24,14 @@ def build_exe():
         '--add-data=models;models',  # 包含模型文件夹
         '--add-data=core;core',  # 包含核心模块
         '--add-data=utils;utils',  # 包含工具模块
+        '--add-data=services;services', # 包含服务模块
+        '--add-data=api;api', # 包含api模块
         '--add-data=ui;ui',  # 包含界面模块
         '--add-data=poppler;poppler',  # 包含 Poppler（PDF 转图片）
         '--hidden-import=torch',  # 隐藏导入
         '--hidden-import=transformers',
+        '--hidden-import=fastapi',
+        "--hidden-import=uvicorn",
         '--hidden-import=customtkinter',
 
     # transformers 相关（关键）
