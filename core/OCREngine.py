@@ -18,8 +18,17 @@ class OCREngine:
     # 超过此尺寸的图片会在预处理时等比缩放，避免浪费内存
     MAX_IMAGE_LONG_EDGE = 4096
 
+    # dtype 配置值到实际类型的映射
+    DTYPE_MAP = {
+        "float16": torch.float16,
+        "float32": torch.float32,
+        "bfloat16": torch.bfloat16,
+        "auto": "auto",
+    }
+
     def __init__(self, model_path: str = "zai-org/GLM-OCR", device: str = "auto",
-                 use_local_only: bool = False, quantization: str = "none"):
+                 use_local_only: bool = False, quantization: str = "none",
+                 dtype: str = "float16"):
         """
         初始化 OCR 引擎
 
@@ -28,11 +37,13 @@ class OCREngine:
             device: 设备 (auto, cpu, cuda, cuda:0, etc.)
             use_local_only: 是否仅使用本地模型，不连接 HuggingFace
             quantization: 量化模式 ("none", "8bit", "4bit")
+            dtype: 模型精度 ("float16", "float32", "bfloat16", "auto")
         """
         self.model_path = model_path
         self.device = device
         self.use_local_only = use_local_only
         self.quantization = quantization
+        self.dtype = self.DTYPE_MAP.get(dtype, torch.float16)
         self.processor = None
         self.model = None
         self._is_loaded = False
@@ -58,7 +69,8 @@ class OCREngine:
             self.processor = AutoProcessor.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
-                local_files_only=self.use_local_only
+                local_files_only=self.use_local_only,
+                use_fast=False
             )
 
             if progress_callback:
@@ -67,7 +79,7 @@ class OCREngine:
             # 构建加载参数
             load_kwargs = dict(
                 pretrained_model_name_or_path=self.model_path,
-                torch_dtype=torch.float16,
+                dtype=self.dtype,
                 device_map=self.device,
                 trust_remote_code=True,
                 local_files_only=self.use_local_only,
@@ -132,12 +144,15 @@ class OCREngine:
         """检查模型是否已加载"""
         return self._is_loaded
 
-    def _prepare_image(self, image: Union[str, Path, Image.Image]) -> str:
+    def _prepare_image(self, image: Union[str, Path, Image.Image]) -> tuple:
         """
         预处理图片：限制超大图片尺寸以节省内存，返回可用的图片路径。
 
         对于超过 MAX_IMAGE_LONG_EDGE 的图片，等比缩放后保存到临时文件。
         普通尺寸图片直接返回原始路径。
+
+        Returns:
+            (image_url, is_temp): 图片路径和是否为临时文件
         """
         import tempfile
         import os
@@ -159,17 +174,17 @@ class OCREngine:
             needs_temp = True
 
         if needs_temp:
-            temp_dir = tempfile.gettempdir()
-            temp_path = os.path.join(temp_dir, "temp_ocr_image.png")
+            fd, temp_path = tempfile.mkstemp(suffix=".png", prefix="ocr_")
+            os.close(fd)
             # 转为 RGB 避免 PNG 保存 RGBA 浪费空间
             if pil_image.mode not in ("RGB", "L"):
                 pil_image = pil_image.convert("RGB")
             pil_image.save(temp_path)
             pil_image.close()
-            return temp_path
+            return temp_path, True
         else:
             pil_image.close()
-            return str(image)
+            return str(image), False
 
     def recognize_image(
         self,
@@ -194,9 +209,8 @@ class OCREngine:
         temp_path = None
         try:
             # 预处理图片（限制超大图片尺寸）
-            image_url = self._prepare_image(image)
-            if isinstance(image, Image.Image):
-                import os
+            image_url, is_temp = self._prepare_image(image)
+            if is_temp:
                 temp_path = image_url  # 记录临时文件以便清理
 
             # 按官方文档构建消息

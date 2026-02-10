@@ -19,7 +19,7 @@
                   cuda  - 强制使用显卡
                   cpu   - 强制使用CPU
 
-    torch_dtype   模型精度
+    dtype   模型精度
                   float16 - 半精度（推荐，省显存）
                   auto    - 自动选择
                   float32 - 全精度（更准但占用翻倍）

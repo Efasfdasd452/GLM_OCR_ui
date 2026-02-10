@@ -27,7 +27,7 @@ def test_model_loading():
         print(f"正在加载模型...")
         model = AutoModelForImageTextToText.from_pretrained(
             pretrained_model_name_or_path=model_path,
-            torch_dtype="auto",
+            dtype="auto",
             device_map="auto",
         )
         print(f"✓ 模型加载成功")

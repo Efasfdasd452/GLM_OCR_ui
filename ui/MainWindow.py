@@ -17,12 +17,15 @@ from utils.ScreenCapture import ScreenCapture
 from utils.PDFUtils import PDFUtils
 from ui.ToastNotification import ToastNotification
 from ui.LanguageManager import LanguageManager
+from services.local_service import LocalOCRService
+from services.remote_service import RemoteOCRService
+from ui.TrayManager import TrayManager
 
 
 class MainWindow(ctk.CTk):
     """主窗口类"""
 
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, api_manager=None):
         super().__init__()
 
         # 基础目录（兼容 PyInstaller 打包）
@@ -40,9 +43,20 @@ class MainWindow(ctk.CTk):
         # 语言管理器
         self.lang = LanguageManager(self.config.get("ui.language", "简体中文"))
 
-        # OCR 引擎
+        # OCR 引擎和服务
         self.ocr_engine = None
+        self.ocr_service = None
         self.model_loaded = False
+        self._using_local_api = False  # 是否通过本地 API 调用（避免重复加载模型）
+        self._api_poll_id = None
+        self._api_poll_errors = 0  # 轮询连续失败次数
+
+        # API 服务器管理器
+        self.api_manager = api_manager
+
+        # 字体设置
+        self.font_family = self.config.get("ui.font_family", "Microsoft YaHei UI")
+        self.font_size = self.config.get("ui.font_size", 12)
 
         # 动态 Token 设置
         self.current_tokens = self.config.get("model.max_new_tokens", 2048)
@@ -51,8 +65,27 @@ class MainWindow(ctk.CTk):
         self.setup_window()
         self.create_widgets()
 
+        # 识别状态
+        self._recognizing = False
+        self._loading_anim_id = None
+        self._model_loading = False  # 防止并发加载模型
+
         # 绑定快捷键
         self.bind_shortcuts()
+
+        # 绑定关闭事件
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # 初始化系统托盘
+        icon_path = self.base_dir / "icon.ico"
+        self.tray_manager = TrayManager(self, str(icon_path))
+        self.tray_manager.start()
+
+        # 同步 API 状态到托盘
+        if self.api_manager and self.api_manager.is_running():
+            self.tray_manager.set_api_status(True, self.api_manager.port)
+            # 本地 API 运行中，通过 API 调用避免重复加载模型
+            self._connect_local_api()
 
     def setup_window(self):
         """设置窗口"""
@@ -75,6 +108,62 @@ class MainWindow(ctk.CTk):
         # 设置主题
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
+
+    def _font(self, size_offset=0, bold=False):
+        """返回统一字体元组
+        Args:
+            size_offset: 相对于基础字体大小的偏移量
+            bold: 是否加粗
+        """
+        size = self.font_size + size_offset
+        if bold:
+            return (self.font_family, size, "bold")
+        return (self.font_family, size)
+
+    def apply_font_settings(self):
+        """应用字体设置到所有 UI 组件"""
+        # 侧边栏
+        self.logo_label.configure(font=self._font(12, bold=True))
+        for btn in (self.btn_screenshot, self.btn_clipboard, self.btn_batch,
+                     self.btn_folder, self.btn_pdf_ocr, self.btn_settings,
+                     self.btn_load_model):
+            btn.configure(font=self._font())
+        self.model_status_label.configure(font=self._font())
+
+        # 控制栏
+        self.prompt_label.configure(font=self._font())
+        self.prompt_type.configure(font=self._font())
+        self.token_label.configure(font=self._font())
+        self.token_entry.configure(font=self._font())
+
+        # 单图 OCR
+        self.image_label.configure(font=self._font())
+        self.btn_select_image.configure(font=self._font())
+        self.result_label.configure(font=self._font())
+        self.btn_quick_ocr.configure(font=self._font(1))
+        self.btn_copy_result.configure(font=self._font(1))
+        self.result_text.configure(font=self._font())
+
+        # 批量 OCR
+        self.btn_add_files.configure(font=self._font())
+        self.btn_add_folder.configure(font=self._font())
+        self.recursive_checkbox.configure(font=self._font())
+        self.btn_clear_list.configure(font=self._font())
+        self.btn_start_batch.configure(font=self._font())
+        self.file_list_label.configure(font=self._font())
+        self.file_listbox.configure(font=self._font())
+        self.progress_label.configure(font=self._font())
+
+        # PDF OCR
+        self.btn_select_pdf.configure(font=self._font())
+        self.pdf_path_label.configure(font=self._font())
+        self.btn_save_pdf_result.configure(font=self._font())
+        self.pdf_progress_label.configure(font=self._font())
+        self.pdf_result_text.configure(font=self._font())
+
+        # 日志
+        self.log_text.configure(font=self._font())
+        self.btn_clear_log.configure(font=self._font())
 
     def update_ui_language(self):
         """更新所有界面元素的语言"""
@@ -134,6 +223,9 @@ class MainWindow(ctk.CTk):
         # 创建主内容区
         self.create_main_content()
 
+        # 应用字体设置
+        self.apply_font_settings()
+
     def create_sidebar(self):
         """创建侧边栏"""
         self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
@@ -144,7 +236,7 @@ class MainWindow(ctk.CTk):
         self.logo_label = ctk.CTkLabel(
             self.sidebar,
             text="GLM-OCR",
-            font=("Microsoft YaHei UI", 24, "bold")
+            font=self._font(12, bold=True)
         )
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
@@ -248,7 +340,7 @@ class MainWindow(ctk.CTk):
         self.prompt_type = ctk.CTkOptionMenu(
             self.control_frame,
             values=recognition_types,
-            font=("Microsoft YaHei UI", 12),
+            font=self._font(),
             command=self.on_prompt_change
         )
         self.prompt_type.set(recognition_types[0])  # 设置默认值
@@ -350,7 +442,7 @@ class MainWindow(ctk.CTk):
             command=self.quick_ocr,
             width=160,
             height=35,
-            font=("Microsoft YaHei UI", 13)
+            font=self._font(1)
         )
         self.btn_quick_ocr.grid(row=0, column=1, padx=5)
 
@@ -361,7 +453,7 @@ class MainWindow(ctk.CTk):
             command=self.copy_result,
             width=120,
             height=35,
-            font=("Microsoft YaHei UI", 13),
+            font=self._font(1),
             fg_color="#1f6aa5"
         )
         self.btn_copy_result.grid(row=0, column=2, padx=5)
@@ -538,7 +630,6 @@ class MainWindow(ctk.CTk):
 
         try:
             import qrcode
-            from PIL import ImageTk
 
             qr = qrcode.QRCode(box_size=10, border=4)
             qr.add_data(text)
@@ -548,10 +639,11 @@ class MainWindow(ctk.CTk):
             # 缩放到预览尺寸
             preview = self._qr_image.copy()
             preview.thumbnail((380, 380))
+            w, h = preview.size
 
-            tk_image = ImageTk.PhotoImage(preview)
-            self.qr_preview_label.configure(image=tk_image, text="")
-            self.qr_preview_label._tk_image = tk_image  # 防止被 GC 回收
+            ctk_image = ctk.CTkImage(light_image=preview, dark_image=preview, size=(w, h))
+            self.qr_preview_label.configure(image=ctk_image, text="")
+            self.qr_preview_label._ctk_image = ctk_image  # 防止被 GC 回收
 
             self.log(f"✓ 二维码已生成: {text[:50]}{'...' if len(text) > 50 else ''}")
         except ImportError:
@@ -600,6 +692,233 @@ class MainWindow(ctk.CTk):
         self.bind("<Control-Shift-s>", lambda e: self.screenshot_ocr())
         self.bind("<Control-Shift-S>", lambda e: self.screenshot_ocr())
 
+    # ==================== 加载动画 ====================
+
+    def _start_loading_animation(self):
+        """开始识别加载动画"""
+        self._recognizing = True
+        self._loading_dots = 0
+        # 清空结果区
+        self.result_text.configure(state="normal")
+        self.result_text.delete("1.0", "end")
+        # 禁用按钮防止重复点击
+        self.btn_quick_ocr.configure(state="disabled", text="识别中...")
+        self.btn_select_image.configure(state="disabled")
+        # 启动动画
+        self._animate_loading()
+
+    def _animate_loading(self):
+        """更新加载动画帧"""
+        if not self._recognizing:
+            return
+        self._loading_dots = (self._loading_dots % 6) + 1
+        dots = "." * self._loading_dots
+        spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        frame = spinner[self._loading_dots % len(spinner)]
+        self.result_text.delete("1.0", "end")
+        self.result_text.insert("1.0", f"\n\n\t{frame}  正在识别中{dots}\n\n\t请稍候...")
+        self._loading_anim_id = self.after(300, self._animate_loading)
+
+    def _stop_loading_animation(self):
+        """停止加载动画，恢复按钮"""
+        self._recognizing = False
+        if self._loading_anim_id:
+            self.after_cancel(self._loading_anim_id)
+            self._loading_anim_id = None
+        # 恢复按钮
+        self.btn_quick_ocr.configure(
+            state="normal",
+            text=self.lang.get("quick_recognition")
+        )
+        self.btn_select_image.configure(state="normal")
+
+    # ==================== 窗口和托盘方法 ====================
+
+    def on_close(self):
+        """窗口关闭事件处理"""
+        choice = self.config.get("ui.minimize_to_tray", None)
+
+        if choice is None:
+            # 首次关闭，弹出确认对话框
+            self._show_close_confirm_dialog()
+        elif choice is True:
+            # 已设置最小化到托盘
+            self.hide_window()
+        else:
+            # 已设置直接退出
+            self.quit_app()
+
+    def _show_close_confirm_dialog(self):
+        """显示关闭确认对话框"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("关闭确认")
+        dialog.geometry("420x230")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_force()
+
+        # 居中显示
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 420) // 2
+        y = self.winfo_y() + (self.winfo_height() - 230) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # 标题
+        ctk.CTkLabel(
+            dialog,
+            text="关闭窗口",
+            font=("Microsoft YaHei UI", 18, "bold")
+        ).pack(pady=(20, 10))
+
+        # 说明
+        ctk.CTkLabel(
+            dialog,
+            text="请选择关闭方式：",
+            font=("Microsoft YaHei UI", 13)
+        ).pack(pady=(0, 10))
+
+        # 记住选择复选框
+        remember_var = ctk.BooleanVar(dialog, value=False)
+        ctk.CTkCheckBox(
+            dialog,
+            text="记住我的选择",
+            variable=remember_var
+        ).pack(pady=(0, 15))
+
+        # 按钮区
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(0, 20))
+
+        def minimize_to_tray():
+            if remember_var.get():
+                self.config.set("ui.minimize_to_tray", True)
+                self.config.save_config()
+            dialog.destroy()
+            self.hide_window()
+
+        def exit_app():
+            if remember_var.get():
+                self.config.set("ui.minimize_to_tray", False)
+                self.config.save_config()
+            dialog.destroy()
+            self.quit_app()
+
+        ctk.CTkButton(
+            btn_frame,
+            text="最小化到托盘",
+            command=minimize_to_tray,
+            width=140,
+            height=38,
+            fg_color="#1f6aa5"
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="退出程序",
+            command=exit_app,
+            width=140,
+            height=38,
+            fg_color="#d32f2f"
+        ).pack(side="left", padx=10)
+
+        # ESC 关闭对话框（不退出）
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+    def show_window(self):
+        """显示主窗口"""
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def hide_window(self):
+        """隐藏主窗口到托盘"""
+        self.withdraw()
+
+    def quit_app(self):
+        """完全退出程序"""
+        # 取消 API 状态轮询
+        if self._api_poll_id:
+            self.after_cancel(self._api_poll_id)
+            self._api_poll_id = None
+        # 关闭本地 API 远程服务客户端
+        if self._using_local_api and self.ocr_service and isinstance(self.ocr_service, RemoteOCRService):
+            self.ocr_service.close()
+        # 停止 API 服务器
+        if self.api_manager:
+            self.api_manager.stop()
+        # 停止托盘图标
+        if hasattr(self, 'tray_manager'):
+            self.tray_manager.stop()
+        # 卸载模型（仅本地模式需要）
+        if not self._using_local_api and self.ocr_engine:
+            try:
+                self.ocr_engine.unload_model()
+            except Exception:
+                pass
+        # 退出主循环
+        self.destroy()
+
+    def start_api_server(self):
+        """启动 API 服务器"""
+        if not self.api_manager:
+            from main import api_server_manager
+            self.api_manager = api_server_manager
+
+        if self.api_manager.is_running():
+            self.log("API 服务器已在运行")
+            return
+
+        host = self.config.get("api.host", "127.0.0.1")
+        port = self.config.get("api.port", 8000)
+
+        success = self.api_manager.start(host, port)
+        if success:
+            actual_port = self.api_manager.port
+            self.log(f"✓ API 服务器已启动: {host}:{actual_port}")
+            self.tray_manager.set_api_status(True, actual_port)
+
+            # 如果当前没有通过本地 API 调用，自动切换
+            if not self._using_local_api:
+                # 卸载本地模型（如果已加载），避免占用显存
+                if self.ocr_engine:
+                    self.ocr_engine.unload_model()
+                    self.ocr_engine = None
+                self._connect_local_api()
+                self.log("已自动切换到本地 API 模式")
+        else:
+            self.log("✗ API 服务器启动失败")
+
+    def stop_api_server(self):
+        """停止 API 服务器"""
+        if self.api_manager and self.api_manager.is_running():
+            self.api_manager.stop()
+            self.log("✓ API 服务器已停止")
+            self.tray_manager.set_api_status(False)
+
+            # 如果之前通过本地 API 调用，需要重置状态
+            if self._using_local_api:
+                # 取消轮询
+                if self._api_poll_id:
+                    self.after_cancel(self._api_poll_id)
+                    self._api_poll_id = None
+                # 关闭远程服务客户端
+                if self.ocr_service and isinstance(self.ocr_service, RemoteOCRService):
+                    self.ocr_service.close()
+                self._using_local_api = False
+                self._api_poll_errors = 0
+                self.ocr_service = None
+                self.model_loaded = False
+                self.model_status_label.configure(text="请加载本地模型", text_color="red")
+                self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                self.log("API 已关闭，请手动加载本地模型")
+        else:
+            self.log("API 服务器未在运行")
+
+    @property
+    def api_server_running(self):
+        """API 服务器是否运行中"""
+        return self.api_manager is not None and self.api_manager.is_running()
+
     # ==================== 功能方法 ====================
 
     def toggle_model(self):
@@ -609,51 +928,244 @@ class MainWindow(ctk.CTk):
         else:
             self.unload_model()
 
+    def _init_ocr_service(self):
+        """根据配置初始化 OCR 服务"""
+        mode = self.config.get("api.mode", "local")
+
+        if mode == "remote":
+            # 远程模式：优先用 remote_host + remote_port 拼接
+            r_host = self.config.get("api.remote_host", "")
+            r_port = self.config.get("api.remote_port", 0)
+            if r_host and r_port:
+                bracket = f"[{r_host}]" if ":" in str(r_host) else r_host
+                remote_url = f"http://{bracket}:{r_port}"
+            else:
+                remote_url = self.config.get("api.remote_url", "http://127.0.0.1:8000")
+            self.ocr_service = RemoteOCRService(remote_url)
+            self.log(f"使用远程 OCR 服务: {remote_url}")
+
+            # 检查远程服务状态
+            if self.ocr_service.is_loaded():
+                self.model_loaded = True
+                self.model_status_label.configure(text="远程模型已连接", text_color="green")
+                self.btn_load_model.configure(text="断开连接", fg_color="red")
+            else:
+                self.model_loaded = False
+                self.model_status_label.configure(text="远程服务未就绪", text_color="red")
+                self.btn_load_model.configure(text="重新连接", fg_color="green")
+        else:
+            # 本地模式
+            if self.ocr_engine and self.ocr_engine.is_loaded():
+                self.ocr_service = LocalOCRService(self.ocr_engine)
+                self.log("使用本地 OCR 服务")
+            else:
+                self.ocr_service = None
+                self.log("本地模型未加载")
+
+    def _connect_local_api(self):
+        """连接到本地 API 服务（避免重复加载模型）"""
+        port = self.api_manager.port
+        base_url = f"http://127.0.0.1:{port}"
+
+        self._using_local_api = True
+        self._api_poll_errors = 0
+        self.ocr_service = RemoteOCRService(base_url)
+
+        # 更新 UI 状态
+        self.model_status_label.configure(text="API 模型加载中...", text_color="orange")
+        self.btn_load_model.configure(state="disabled", text="加载中...")
+        self.log(f"已连接本地 API 服务 ({base_url})，等待模型加载...")
+
+        # 开始轮询模型加载状态
+        self._poll_api_model_status()
+
+    def _poll_api_model_status(self):
+        """轮询 API 模型加载状态"""
+        if not self._using_local_api:
+            return
+
+        # 检测 API 进程是否已退出
+        if not self.api_manager or not self.api_manager.is_running():
+            self._api_poll_id = None
+            self._api_poll_errors = 0
+            self._using_local_api = False
+            self.ocr_service = None
+            self.model_loaded = False
+            self.model_status_label.configure(text="API 服务已断开", text_color="red")
+            self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+            self.log("⚠ API 服务已断开，请手动加载本地模型")
+            return
+
+        try:
+            loaded = self.ocr_service.is_loaded()
+            if loaded:
+                self.model_loaded = True
+                self._api_poll_errors = 0
+                self.model_status_label.configure(text="API 模型已加载", text_color="green")
+                self.btn_load_model.configure(text="卸载模型", fg_color="red", state="normal")
+                self.log("✓ API 模型已加载就绪")
+                self._api_poll_id = None
+                return
+            # 模型尚未加载但 API 正常响应，重置错误计数
+            self._api_poll_errors = 0
+        except Exception:
+            self._api_poll_errors += 1
+            # 连续失败超过 15 次（约 30 秒）则停止轮询
+            if self._api_poll_errors >= 15:
+                self._api_poll_id = None
+                self.model_status_label.configure(text="API 无响应", text_color="red")
+                self.btn_load_model.configure(text="重试", fg_color="green", state="normal")
+                self.log("⚠ API 持续无响应，已停止轮询。可点击按钮重试")
+                return
+
+        # 继续轮询（每 2 秒）
+        self._api_poll_id = self.after(2000, self._poll_api_model_status)
+
+    def _load_model_via_api(self):
+        """通过本地 API 加载模型"""
+        def load_thread():
+            self.after(0, lambda: self.btn_load_model.configure(state="disabled", text="加载中..."))
+            self.after(0, lambda: self.model_status_label.configure(
+                text="API 模型加载中...", text_color="orange"))
+            self.log("正在通过 API 加载模型...")
+
+            try:
+                response = self.ocr_service.client.post(
+                    f"{self.ocr_service.base_url}/api/model/load",
+                    timeout=300.0
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("success"):
+                    def on_success():
+                        self.model_loaded = True
+                        self.model_status_label.configure(text="API 模型已加载", text_color="green")
+                        self.btn_load_model.configure(text="卸载模型", fg_color="red", state="normal")
+                        self.log("✓ API 模型加载成功")
+                    self.after(0, on_success)
+                else:
+                    msg = data.get("detail", "未知错误")
+                    def on_fail():
+                        self.model_status_label.configure(text="API 模型加载失败", text_color="red")
+                        self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                        self.log(f"✗ API 模型加载失败: {msg}")
+                    self.after(0, on_fail)
+            except Exception as e:
+                err = str(e)
+                def on_error():
+                    self.model_status_label.configure(text="API 模型加载失败", text_color="red")
+                    self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                    self.log(f"✗ API 模型加载异常: {err}")
+                self.after(0, on_error)
+
+        threading.Thread(target=load_thread, daemon=True).start()
+
+    def _unload_model_via_api(self):
+        """通过本地 API 卸载模型"""
+        try:
+            response = self.ocr_service.client.post(
+                f"{self.ocr_service.base_url}/api/model/unload",
+                timeout=30.0
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("success"):
+                self.model_loaded = False
+                self.model_status_label.configure(text="API 模型未加载", text_color="red")
+                self.btn_load_model.configure(text="加载模型", fg_color="green")
+                self.log("✓ API 模型已卸载")
+            else:
+                self.log(f"✗ API 模型卸载失败: {data.get('detail', '未知错误')}")
+        except Exception as e:
+            self.log(f"✗ API 模型卸载失败: {e}")
+
     def load_model(self):
         """加载模型"""
+        # 如果通过本地 API 模式，调用 API 加载或重新轮询
+        if self._using_local_api:
+            self._api_poll_errors = 0
+            # 如果 API 端模型未加载，尝试触发加载
+            if not self.model_loaded:
+                self._load_model_via_api()
+            return
+
+        # 如果是远程模式，重新初始化服务
+        if self.config.get("api.mode") == "remote":
+            self._init_ocr_service()
+            return
+
+        # 本地模式：加载模型（防止并发加载）
+        if self._model_loading:
+            self.log("模型正在加载中，请勿重复操作")
+            return
+        self._model_loading = True
 
         def load_thread():
-            self.log("开始加载模型...")
-            self.btn_load_model.configure(state="disabled", text="加载中...")
-            quantization = self.config.get("model.quantization", "none")
-            if self.config.get("model.use_local_only"):
-                self.ocr_engine = OCREngine(
-                    model_path=self.config.get("model.local_path"),
-                    device=self.config.get("model.device"),
-                    use_local_only=self.config.get("model.use_local_only"),
-                    quantization=quantization
-                )
-            else:
-                self.ocr_engine = OCREngine(
-                    model_path=self.config.get("model.name"),
-                    device=self.config.get("model.device"),
-                    quantization=quantization
+            try:
+                self.log("开始加载模型...")
+                self.after(0, lambda: self.btn_load_model.configure(state="disabled", text="加载中..."))
+                quantization = self.config.get("model.quantization", "none")
+                dtype = self.config.get("model.dtype", "float16")
+                if self.config.get("model.use_local_only"):
+                    self.ocr_engine = OCREngine(
+                        model_path=self.config.get("model.local_path"),
+                        device=self.config.get("model.device"),
+                        use_local_only=self.config.get("model.use_local_only"),
+                        quantization=quantization,
+                        dtype=dtype
+                    )
+                else:
+                    self.ocr_engine = OCREngine(
+                        model_path=self.config.get("model.name"),
+                        device=self.config.get("model.device"),
+                        quantization=quantization,
+                        dtype=dtype
+                    )
+
+                success = self.ocr_engine.load_model(
+                    progress_callback=lambda msg, prog: self.log(f"[模型加载] {msg}")
                 )
 
-            success = self.ocr_engine.load_model(
-                progress_callback=lambda msg, prog: self.log(f"[模型加载] {msg}")
-            )
+                def on_done():
+                    if success:
+                        self.model_loaded = True
+                        self.model_status_label.configure(text="模型已加载", text_color="green")
+                        self.btn_load_model.configure(text="卸载模型", fg_color="red", state="normal")
+                        self.log("✓ 模型加载成功")
+                        self.ocr_service = LocalOCRService(self.ocr_engine)
+                    else:
+                        self.model_status_label.configure(text="加载失败", text_color="red")
+                        self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                        self.log("✗ 模型加载失败")
 
-            if success:
-                self.model_loaded = True
-                self.model_status_label.configure(text="模型已加载", text_color="green")
-                self.btn_load_model.configure(
-                    text="卸载模型",
-                    fg_color="red",
-                    state="normal"
-                )
-                self.log("✓ 模型加载成功")
-            else:
-                self.model_status_label.configure(text="加载失败", text_color="red")
-                self.btn_load_model.configure(text="加载模型", state="normal")
-                self.log("✗ 模型加载失败")
+                self.after(0, on_done)
+            finally:
+                self._model_loading = False
 
         threading.Thread(target=load_thread, daemon=True).start()
 
     def unload_model(self):
         """卸载模型"""
+        # 本地 API 模式：通过 API 卸载
+        if self._using_local_api:
+            self._unload_model_via_api()
+            return
+
+        # 远程模式：断开连接
+        if self.config.get("api.mode") == "remote":
+            self.ocr_service = None
+            self.model_loaded = False
+            self.model_status_label.configure(text="远程服务未连接", text_color="red")
+            self.btn_load_model.configure(text="重新连接", fg_color="green")
+            self.log("已断开远程服务")
+            return
+
+        # 本地模式：卸载模型
         if self.ocr_engine:
             self.ocr_engine.unload_model()
+        self.ocr_service = None
         self.model_loaded = False
         self.model_status_label.configure(text="模型未加载", text_color="red")
         self.btn_load_model.configure(text="加载模型", fg_color="green")
@@ -747,6 +1259,10 @@ class MainWindow(ctk.CTk):
         if not self.config.get("ui.screenshot_reminder_disabled", False):
             self._show_screenshot_success_dialog(save_path)
 
+        # 自动识别截图内容
+        if self.model_loaded:
+            self.recognize_image(image)
+
     def clipboard_ocr(self):
         """剪贴板OCR"""
         if not self.model_loaded:
@@ -810,16 +1326,22 @@ class MainWindow(ctk.CTk):
             images = PDFUtils.pdf_to_images(pdf_path)
             total = len(images)
             self.log(f"PDF 共 {total} 页，开始逐页识别...")
-            self.pdf_progress_label.configure(text=f"进度: 0/{total}")
+            self.after(0, lambda: self.pdf_progress_label.configure(text=f"进度: 0/{total}"))
 
             pdf_name = Path(pdf_path).name
             result_parts = [f"# {pdf_name} OCR 结果\n"]
 
             for i, page_image in enumerate(images, 1):
-                self.pdf_progress_label.configure(text=f"正在识别第 {i}/{total} 页...")
+                self.after(0, lambda _i=i: self.pdf_progress_label.configure(
+                    text=f"正在识别第 {_i}/{total} 页..."))
                 self.log(f"正在识别第 {i}/{total} 页...")
 
-                text = self.ocr_engine.recognize_image(
+                if not self.ocr_service:
+                    self.log("✗ OCR 服务未就绪")
+                    self.after(0, lambda: messagebox.showerror("错误", "OCR 服务未就绪"))
+                    return
+
+                text = self.ocr_service.recognize_image(
                     page_image,
                     prompt="Document Parsing:",
                     max_new_tokens=self.current_tokens
@@ -837,25 +1359,27 @@ class MainWindow(ctk.CTk):
 
                 result_parts.append(page_md)
 
-                # 实时更新结果显示
+                # 实时更新结果显示（调度到主线程）
                 self._pdf_result_content = "\n".join(result_parts)
-                self.pdf_result_text.delete("1.0", "end")
-                self.pdf_result_text.insert("1.0", self._pdf_result_content)
-                self.pdf_result_text.see("end")
-
-                # 更新进度条
-                self.pdf_progress_bar.set(i / total)
-                self.pdf_progress_label.configure(text=f"进度: {i}/{total}")
+                content_snapshot = self._pdf_result_content
+                progress = i / total
+                def _update_ui(_content=content_snapshot, _i=i, _prog=progress):
+                    self.pdf_result_text.delete("1.0", "end")
+                    self.pdf_result_text.insert("1.0", _content)
+                    self.pdf_result_text.see("end")
+                    self.pdf_progress_bar.set(_prog)
+                    self.pdf_progress_label.configure(text=f"进度: {_i}/{total}")
+                self.after(0, _update_ui)
 
             self.log(f"✓ PDF OCR 完成，共识别 {total} 页")
-            messagebox.showinfo("完成", f"PDF OCR 完成！\n共识别 {total} 页")
+            self.after(0, lambda: messagebox.showinfo("完成", f"PDF OCR 完成！\n共识别 {total} 页"))
 
         except ImportError as e:
             self.log(f"✗ 依赖缺失: {e}")
-            messagebox.showerror("依赖缺失", str(e))
+            self.after(0, lambda _e=str(e): messagebox.showerror("依赖缺失", _e))
         except Exception as e:
             self.log(f"✗ PDF OCR 失败: {e}")
-            messagebox.showerror("错误", f"PDF OCR 失败:\n{e}")
+            self.after(0, lambda _e=str(e): messagebox.showerror("错误", f"PDF OCR 失败:\n{_e}"))
 
     def save_pdf_result(self):
         """保存 PDF OCR 结果"""
@@ -888,20 +1412,21 @@ class MainWindow(ctk.CTk):
 
     def show_image_preview(self, image):
         """在预览区显示图片"""
-        from PIL import Image, ImageTk
+        from PIL import Image as PILImage
 
         if isinstance(image, (str, Path)):
-            pil_image = Image.open(str(image))
+            pil_image = PILImage.open(str(image))
         else:
             pil_image = image
 
         # 缩放到预览区大小，保持比例
         preview = pil_image.copy()
         preview.thumbnail((600, 200))
+        w, h = preview.size
 
-        tk_image = ImageTk.PhotoImage(preview)
-        self.image_label.configure(image=tk_image, text="")
-        self.image_label._tk_image = tk_image  # 防止 GC 回收
+        ctk_image = ctk.CTkImage(light_image=preview, dark_image=preview, size=(w, h))
+        self.image_label.configure(image=ctk_image, text="")
+        self.image_label._ctk_image = ctk_image  # 防止 GC 回收
 
     def select_image(self):
         """选择图片"""
@@ -918,73 +1443,110 @@ class MainWindow(ctk.CTk):
             self.show_image_preview(file_path)
             self.recognize_image(file_path)
 
+    def _get_prompt_for_current_type(self) -> tuple:
+        """根据当前选择的识别类型返回 (is_qrcode, prompt_string)"""
+        current = self.prompt_type.get()
+        # 通过对比翻译文本来反向查找识别类型 key
+        type_key_map = {
+            "text_recognition": "Text Recognition:",
+            "document_parsing": "Document Parsing:",
+            "table_recognition": "Table Recognition:",
+            "formula_recognition": "Formula Recognition:",
+            "qrcode_recognition": None,  # 二维码模式不需要 prompt
+        }
+        for key, prompt in type_key_map.items():
+            if current == self.lang.get(key):
+                if key == "qrcode_recognition":
+                    return True, "Text Recognition:"
+                return False, prompt
+        # 兜底：默认文本识别
+        return False, "Text Recognition:"
+
     def recognize_image(self, image):
-        """识别图片"""
-        is_qrcode_mode = self.prompt_type.get() == "二维码识别"
+        """识别图片（带加载动画）"""
+        is_qrcode_mode, selected_prompt = self._get_prompt_for_current_type()
 
         if not is_qrcode_mode and not self.model_loaded:
-            messagebox.showwarning("警告", "请先加载模型")
+            messagebox.showwarning("警告", "请先加载模型或配置远程服务")
             return
 
+        # 防止重复识别
+        if self._recognizing:
+            return
+
+        # 开始加载动画
+        self._start_loading_animation()
+
         def recognize_thread():
-            self.log("开始识别...")
-            output_parts = []
+            try:
+                self.log("开始识别...")
+                output_parts = []
 
-            if is_qrcode_mode:
-                # 二维码识别模式
-                self.log("正在扫描二维码...")
-                qr_results = QRCodeUtils.decode_qrcodes(image)
-                qr_text = QRCodeUtils.format_results(qr_results)
+                if is_qrcode_mode:
+                    # 二维码识别模式
+                    self.log("正在扫描二维码...")
+                    qr_results = QRCodeUtils.decode_qrcodes(image)
+                    qr_text = QRCodeUtils.format_results(qr_results)
 
-                if qr_text:
-                    output_parts.append(qr_text)
-                    self.log(f"✓ 检测到 {len(qr_results)} 个二维码")
+                    if qr_text:
+                        output_parts.append(qr_text)
+                        self.log(f"✓ 检测到 {len(qr_results)} 个二维码")
 
-                # 如果模型已加载，同时进行 OCR 识别（处理混合图片）
-                if self.model_loaded:
-                    self.log("正在 OCR 识别文字...")
-                    ocr_result = self.ocr_engine.recognize_image(
+                    # 如果模型已加载，同时进行 OCR 识别（处理混合图片）
+                    if self.model_loaded and self.ocr_service:
+                        self.log("正在 OCR 识别文字...")
+                        ocr_result = self.ocr_service.recognize_image(
+                            image,
+                            prompt="Text Recognition:",
+                            max_new_tokens=self.current_tokens
+                        )
+                        if ocr_result and ocr_result.strip():
+                            output_parts.append(f"[文字识别结果]\n{ocr_result}")
+                            self.log("✓ 文字识别完成")
+
+                    if output_parts:
+                        self.after(0, lambda: self._show_result("\n\n".join(output_parts)))
+                        self.log("✓ 识别完成")
+                    else:
+                        self.after(0, lambda: self._show_result(""))
+                        self.log("✗ 未检测到二维码或文字")
+                        messagebox.showinfo("提示", "未检测到二维码")
+                else:
+                    # 常规 OCR 模式
+                    prompt = selected_prompt
+
+                    if not self.ocr_service:
+                        self.log("✗ OCR 服务未就绪")
+                        self.after(0, lambda: self._show_result(""))
+                        messagebox.showerror("错误", "OCR 服务未就绪")
+                        return
+
+                    result = self.ocr_service.recognize_image(
                         image,
-                        prompt="Text Recognition:",
+                        prompt=prompt,
                         max_new_tokens=self.current_tokens
                     )
-                    if ocr_result and ocr_result.strip():
-                        output_parts.append(f"[文字识别结果]\n{ocr_result}")
-                        self.log("✓ 文字识别完成")
 
-                if output_parts:
-                    self.result_text.delete("1.0", "end")
-                    self.result_text.insert("1.0", "\n\n".join(output_parts))
-                    self.log("✓ 识别完成")
-                else:
-                    self.log("✗ 未检测到二维码或文字")
-                    messagebox.showinfo("提示", "未检测到二维码")
-            else:
-                # 常规 OCR 模式
-                prompt_map = {
-                    "文本识别": "Text Recognition:",
-                    "文档解析": "Document Parsing:",
-                    "表格识别": "Table Recognition:",
-                    "公式识别": "Formula Recognition:"
-                }
-
-                prompt = prompt_map.get(self.prompt_type.get(), "Text Recognition:")
-
-                result = self.ocr_engine.recognize_image(
-                    image,
-                    prompt=prompt,
-                    max_new_tokens=self.current_tokens
-                )
-
-                if result:
-                    self.result_text.delete("1.0", "end")
-                    self.result_text.insert("1.0", result)
-                    self.log("✓ 识别完成")
-                else:
-                    self.log("✗ 识别失败")
-                    messagebox.showerror("错误", "识别失败")
+                    if result:
+                        self.after(0, lambda r=result: self._show_result(r))
+                        self.log("✓ 识别完成")
+                    else:
+                        self.after(0, lambda: self._show_result(""))
+                        self.log("✗ 识别失败")
+                        messagebox.showerror("错误", "识别失败")
+            except Exception as e:
+                self.log(f"✗ 识别异常: {e}")
+                self.after(0, lambda: self._show_result(""))
+            finally:
+                self.after(0, self._stop_loading_animation)
 
         threading.Thread(target=recognize_thread, daemon=True).start()
+
+    def _show_result(self, text: str):
+        """在结果区显示识别结果（主线程调用）"""
+        self.result_text.delete("1.0", "end")
+        if text:
+            self.result_text.insert("1.0", text)
 
     def copy_result(self):
         """复制结果"""
@@ -1060,15 +1622,14 @@ class MainWindow(ctk.CTk):
                 self.progress_label.configure(text=f"进度: {current}/{total}")
                 self.log(f"[{current}/{total}] 识别完成")
 
-            prompt_map = {
-                "文本识别": "Text Recognition:",
-                "文档解析": "Document Parsing:",
-                "表格识别": "Table Recognition:",
-                "公式识别": "Formula Recognition:"
-            }
-            prompt = prompt_map.get(self.prompt_type.get(), "Text Recognition:")
+            _, prompt = self._get_prompt_for_current_type()
 
-            results = self.ocr_engine.recognize_batch(
+            if not self.ocr_service:
+                self.log("✗ OCR 服务未就绪")
+                messagebox.showerror("错误", "OCR 服务未就绪")
+                return
+
+            results = self.ocr_service.recognize_batch(
                 self.batch_files,
                 prompt=prompt,
                 progress_callback=progress_callback,
@@ -1172,14 +1733,14 @@ class MainWindow(ctk.CTk):
         """打开设置窗口"""
         settings_win = ctk.CTkToplevel(self)
         settings_win.title(self.lang.get("settings_title"))
-        settings_win.geometry("550x450")
+        settings_win.geometry("580x980")
         settings_win.resizable(False, False)
         settings_win.grab_set()
 
         # 居中显示
         settings_win.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 550) // 2
-        y = self.winfo_y() + (self.winfo_height() - 450) // 2
+        x = self.winfo_x() + (self.winfo_width() - 580) // 2
+        y = self.winfo_y() + (self.winfo_height() - 980) // 2
         settings_win.geometry(f"+{x}+{y}")
 
         # 标题
@@ -1228,14 +1789,97 @@ class MainWindow(ctk.CTk):
         )
         language_menu.grid(row=2, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
+        # ========== 字体设置 ==========
+        ctk.CTkLabel(settings_win, text=self.lang.get("font_family"), font=("Microsoft YaHei UI", 14)).grid(
+            row=3, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        font_options = [
+            "Microsoft YaHei UI",
+            "SimSun",
+            "SimHei",
+            "KaiTi",
+            "FangSong",
+            "Arial",
+            "Consolas",
+        ]
+        font_family_var = ctk.StringVar(settings_win, value=self.font_family)
+
+        def on_font_family_change(choice):
+            self.font_family = choice
+            self.config.set("ui.font_family", choice)
+            self.config.save_config()
+            self.apply_font_settings()
+            toast_text = self.lang.get("toast_font_saved")
+            ToastNotification.show(settings_win, f"{toast_text} {choice}", duration=1500)
+            self.log(f"字体已设置为: {choice}")
+
+        ctk.CTkOptionMenu(
+            settings_win,
+            variable=font_family_var,
+            values=font_options,
+            width=250,
+            font=("Microsoft YaHei UI", 12),
+            command=on_font_family_change
+        ).grid(row=3, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # ========== 字体大小设置 ==========
+        ctk.CTkLabel(settings_win, text=self.lang.get("font_size_label"), font=("Microsoft YaHei UI", 14)).grid(
+            row=4, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        font_size_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
+        font_size_frame.grid(row=4, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        font_size_var = ctk.StringVar(settings_win, value=str(self.font_size))
+
+        font_size_slider = ctk.CTkSlider(
+            font_size_frame,
+            from_=10,
+            to=20,
+            number_of_steps=10,
+            width=180,
+            command=lambda val: _on_font_size_change(int(val))
+        )
+        font_size_slider.set(self.font_size)
+        font_size_slider.pack(side="left", padx=(0, 8))
+
+        font_size_entry = ctk.CTkEntry(font_size_frame, textvariable=font_size_var, width=60, justify="center")
+        font_size_entry.pack(side="left", padx=(0, 5))
+
+        ctk.CTkLabel(font_size_frame, text="(10-20)", font=("Microsoft YaHei UI", 11), text_color="gray").pack(
+            side="left", padx=5
+        )
+
+        def _on_font_size_change(val):
+            val = max(10, min(20, val))
+            self.font_size = val
+            font_size_var.set(str(val))
+            font_size_slider.set(val)
+            self.config.set("ui.font_size", val)
+            self.config.save_config()
+            self.apply_font_settings()
+            toast_text = self.lang.get("toast_font_saved")
+            ToastNotification.show(settings_win, f"{toast_text} {val}px", duration=1500)
+
+        def _on_font_size_entry(event=None):
+            try:
+                val = int(font_size_var.get().strip())
+                _on_font_size_change(val)
+            except ValueError:
+                font_size_var.set(str(self.font_size))
+
+        font_size_entry.bind("<Return>", _on_font_size_entry)
+        font_size_entry.bind("<FocusOut>", _on_font_size_entry)
+
         # ========== 输出目录设置 ==========
         ctk.CTkLabel(settings_win, text=self.lang.get("output_directory"), font=("Microsoft YaHei UI", 14)).grid(
-            row=3, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=5, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         output_dir_var = ctk.StringVar(settings_win, value=self.config.get("batch.output_dir", "./output"))
         output_dir_entry = ctk.CTkEntry(settings_win, textvariable=output_dir_var, width=250)
-        output_dir_entry.grid(row=3, column=1, padx=10, pady=12)
+        output_dir_entry.grid(row=5, column=1, padx=10, pady=12)
 
         def browse_output_dir():
             folder = filedialog.askdirectory(title="选择输出目录", parent=settings_win)
@@ -1248,30 +1892,33 @@ class MainWindow(ctk.CTk):
                 self.log(f"输出目录已设置为: {folder}")
 
         ctk.CTkButton(settings_win, text=self.lang.get("browse"), command=browse_output_dir, width=70).grid(
-            row=3, column=2, padx=10, pady=12
+            row=5, column=2, padx=10, pady=12
         )
 
         # ========== 最大 Token 限制设置 ==========
         ctk.CTkLabel(settings_win, text=self.lang.get("max_token_limit"), font=("Microsoft YaHei UI", 14)).grid(
-            row=4, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=6, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
-        max_tokens_var = ctk.IntVar(
-            settings_win,
-            value=self.config.get("model.max_new_tokens_limit", 8192)
-        )
+        max_tokens_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
+        max_tokens_frame.grid(row=6, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
-        def save_max_tokens(*args):
+        max_tokens_entry = ctk.CTkEntry(max_tokens_frame, width=120)
+        max_tokens_entry.insert(0, str(self.config.get("model.max_new_tokens_limit", 8192)))
+        max_tokens_entry.pack(side="left", padx=(0, 5))
+
+        def confirm_max_tokens():
             try:
-                new_value = max_tokens_var.get()
+                new_value = int(max_tokens_entry.get().strip())
                 if new_value < 512:
                     new_value = 512
-                    max_tokens_var.set(512)
-                    ToastNotification.show(settings_win, "⚠ 最小值为 512", duration=1500)
+                    ToastNotification.show(settings_win, "⚠ 最小值为 512，已自动调整", duration=1500)
                 elif new_value > 32768:
                     new_value = 32768
-                    max_tokens_var.set(32768)
-                    ToastNotification.show(settings_win, "⚠ 最大值为 32768", duration=1500)
+                    ToastNotification.show(settings_win, "⚠ 最大值为 32768，已自动调整", duration=1500)
+
+                max_tokens_entry.delete(0, "end")
+                max_tokens_entry.insert(0, str(new_value))
 
                 self.config.set("model.max_new_tokens_limit", new_value)
                 self.config.save_config()
@@ -1286,28 +1933,25 @@ class MainWindow(ctk.CTk):
                 toast_text = self.lang.get("toast_token_saved")
                 ToastNotification.show(settings_win, f"{toast_text} {new_value}", duration=1500)
                 self.log(f"最大 Token 限制已设置为: {new_value}")
-            except:
-                pass
+            except ValueError:
+                ToastNotification.show(settings_win, "⚠ 请输入有效数字", duration=1500)
 
-        max_tokens_var.trace_add("write", save_max_tokens)
+        max_tokens_entry.bind("<Return>", lambda e: confirm_max_tokens())
 
-        max_tokens_entry = ctk.CTkEntry(
-            settings_win,
-            textvariable=max_tokens_var,
-            width=120
-        )
-        max_tokens_entry.grid(row=4, column=1, padx=10, pady=12, sticky="w")
+        ctk.CTkButton(
+            max_tokens_frame, text="确认", command=confirm_max_tokens, width=60, height=28
+        ).pack(side="left", padx=5)
 
         ctk.CTkLabel(
-            settings_win,
+            max_tokens_frame,
             text="(512-32768)",
             font=("Microsoft YaHei UI", 11),
             text_color="gray"
-        ).grid(row=4, column=2, padx=10, pady=12, sticky="w")
+        ).pack(side="left", padx=5)
 
         # ========== 截图提示设置 ==========
         ctk.CTkLabel(settings_win, text=self.lang.get("screenshot_prompt"), font=("Microsoft YaHei UI", 14)).grid(
-            row=5, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=7, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         screenshot_reminder_var = ctk.BooleanVar(
@@ -1331,16 +1975,430 @@ class MainWindow(ctk.CTk):
             variable=screenshot_reminder_var,
             command=save_screenshot_reminder
         )
-        screenshot_reminder_checkbox.grid(row=5, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        screenshot_reminder_checkbox.grid(row=7, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # ========== API 客户端模式设置 ==========
+        ctk.CTkLabel(settings_win, text="客户端模式", font=("Microsoft YaHei UI", 14)).grid(
+            row=8, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        api_mode_var = ctk.StringVar(settings_win, value=self.config.get("api.mode", "local"))
+
+        def on_mode_change(mode):
+            self.config.set("api.mode", mode)
+            self.config.save_config()
+            # 根据模式显示/隐藏远程 URL 框
+            if mode == "remote":
+                remote_frame.grid(row=9, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+            else:
+                remote_frame.grid_forget()
+            # 重新初始化服务
+            self._init_ocr_service()
+            self.log(f"客户端模式已切换为: {mode}")
+
+        ctk.CTkOptionMenu(
+            settings_win,
+            variable=api_mode_var,
+            values=["local", "remote"],
+            command=on_mode_change,
+            width=200
+        ).grid(row=8, column=1, padx=10, pady=12, sticky="w")
+
+        # 远程地址配置框（仅远程模式显示）
+        remote_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
+
+        # IP 地址
+        ctk.CTkLabel(remote_frame, text="IP:", font=("Microsoft YaHei UI", 12)).grid(
+            row=0, column=0, padx=(0, 5), sticky="w"
+        )
+        remote_ip_entry = ctk.CTkEntry(remote_frame, width=200,
+                                        placeholder_text="例: 192.168.1.100 或 ::1")
+        remote_ip_entry.insert(0, self.config.get("api.remote_host", "127.0.0.1"))
+        remote_ip_entry.grid(row=0, column=1, padx=5)
+
+        remote_ip_hint = ctk.CTkLabel(remote_frame, text="", font=("Microsoft YaHei UI", 10),
+                                       text_color="gray")
+        remote_ip_hint.grid(row=1, column=1, padx=5, sticky="w")
+
+        # 端口
+        ctk.CTkLabel(remote_frame, text="端口:", font=("Microsoft YaHei UI", 12)).grid(
+            row=0, column=2, padx=(15, 5), sticky="w"
+        )
+        remote_port_entry = ctk.CTkEntry(remote_frame, width=80, placeholder_text="8000")
+        remote_port_entry.insert(0, str(self.config.get("api.remote_port",
+                                        self.config.get("api.port", 8000))))
+        remote_port_entry.grid(row=0, column=3, padx=5)
+
+        # 校验函数
+        def _validate_ip(ip_str: str) -> tuple:
+            """校验 IPv4/IPv6 地址，返回 (valid, type_str)"""
+            import ipaddress
+            ip_str = ip_str.strip()
+            if not ip_str:
+                return False, "不能为空"
+            # 也允许域名（比如 localhost）
+            if ip_str.lower() == "localhost":
+                return True, "localhost"
+            try:
+                addr = ipaddress.ip_address(ip_str)
+                if addr.version == 4:
+                    return True, "IPv4"
+                else:
+                    return True, "IPv6"
+            except ValueError:
+                # 尝试当作域名
+                import re
+                domain_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$'
+                if re.match(domain_pattern, ip_str):
+                    return True, "域名"
+                return False, "无效地址"
+
+        def _validate_port(port_str: str) -> tuple:
+            """校验端口号，返回 (valid, msg)"""
+            port_str = port_str.strip()
+            if not port_str:
+                return False, "不能为空"
+            try:
+                port = int(port_str)
+                if port < 1 or port > 65535:
+                    return False, "范围 1-65535"
+                return True, str(port)
+            except ValueError:
+                return False, "必须为数字"
+
+        # 实时 IP 校验提示
+        def on_ip_input(*_):
+            ip = remote_ip_entry.get()
+            if not ip.strip():
+                remote_ip_hint.configure(text="", text_color="gray")
+                return
+            valid, info = _validate_ip(ip)
+            if valid:
+                remote_ip_hint.configure(text=f"✓ {info}", text_color="green")
+            else:
+                remote_ip_hint.configure(text=f"✗ {info}", text_color="red")
+
+        remote_ip_entry.bind("<KeyRelease>", on_ip_input)
+        # 初始显示
+        on_ip_input()
+
+        # 按钮区
+        btn_row_frame = ctk.CTkFrame(remote_frame, fg_color="transparent")
+        btn_row_frame.grid(row=2, column=0, columnspan=4, pady=(5, 0), sticky="w")
+
+        def save_remote_address():
+            ip = remote_ip_entry.get().strip()
+            port_str = remote_port_entry.get().strip()
+
+            ip_valid, ip_info = _validate_ip(ip)
+            if not ip_valid:
+                ToastNotification.show(settings_win, f"⚠ IP 地址无效: {ip_info}", duration=2000)
+                return
+
+            port_valid, port_info = _validate_port(port_str)
+            if not port_valid:
+                ToastNotification.show(settings_win, f"⚠ 端口无效: {port_info}", duration=2000)
+                return
+
+            port = int(port_str)
+            # IPv6 地址需要方括号
+            bracket_ip = f"[{ip}]" if ":" in ip else ip
+            url = f"http://{bracket_ip}:{port}"
+
+            self.config.set("api.remote_host", ip)
+            self.config.set("api.remote_port", port)
+            self.config.set("api.remote_url", url)
+            self.config.save_config()
+
+            self._init_ocr_service()
+            ToastNotification.show(settings_win, f"✓ 远程地址已保存: {url}", duration=1500)
+            self.log(f"远程地址已设置为: {url}")
+
+        ctk.CTkButton(btn_row_frame, text="保存", command=save_remote_address,
+                       width=60, height=28).pack(side="left", padx=(0, 5))
+
+        def test_connection():
+            # 先保存再测试
+            save_remote_address()
+            if self.ocr_service and isinstance(self.ocr_service, RemoteOCRService):
+                success, message = self.ocr_service.test_connection()
+                if success:
+                    messagebox.showinfo("连接测试", f"✓ {message}", parent=settings_win)
+                else:
+                    messagebox.showerror("连接测试", f"✗ {message}", parent=settings_win)
+            else:
+                messagebox.showwarning("提示", "请先切换到远程模式并保存", parent=settings_win)
+
+        ctk.CTkButton(btn_row_frame, text="测试连接", command=test_connection,
+                       width=80, height=28).pack(side="left", padx=5)
+
+        # 根据当前模式决定是否显示
+        if api_mode_var.get() == "remote":
+            remote_frame.grid(row=9, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+
+        # ========== API 服务器设置 ==========
+        ctk.CTkLabel(settings_win, text="API 服务器", font=("Microsoft YaHei UI", 14)).grid(
+            row=10, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        # API 状态和控制区
+        api_control_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
+        api_control_frame.grid(row=10, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # 状态标签
+        api_running = self.api_server_running
+        status_text = f"运行中 (:{self.api_manager.port})" if api_running else "已停止"
+        status_color = "green" if api_running else "red"
+        api_status_label = ctk.CTkLabel(
+            api_control_frame,
+            text=status_text,
+            text_color=status_color,
+            font=("Microsoft YaHei UI", 12)
+        )
+        api_status_label.pack(side="left", padx=(0, 10))
+
+        # 启动/停止按钮
+        def toggle_api_server():
+            if self.api_server_running:
+                self.stop_api_server()
+                self.config.set("api.enabled", False)
+                self.config.save_config()
+                api_toggle_btn.configure(text="启动 API", fg_color="green")
+                api_status_label.configure(text="已停止", text_color="red")
+                ToastNotification.show(settings_win, "✓ API 服务器已停止", duration=1500)
+            else:
+                self.config.set("api.enabled", True)
+                self.config.save_config()
+                self.start_api_server()
+                if self.api_server_running:
+                    port = self.api_manager.port if self.api_manager else "?"
+                    api_toggle_btn.configure(text="停止 API", fg_color="#d32f2f")
+                    api_status_label.configure(text=f"运行中 (:{port})", text_color="green")
+                    ToastNotification.show(settings_win, f"✓ API 服务器已启动 (:{port})", duration=1500)
+                else:
+                    self.config.set("api.enabled", False)
+                    self.config.save_config()
+                    ToastNotification.show(settings_win, "✗ API 服务器启动失败", duration=2000)
+
+        btn_text = "停止 API" if api_running else "启动 API"
+        btn_color = "#d32f2f" if api_running else "green"
+        api_toggle_btn = ctk.CTkButton(
+            api_control_frame,
+            text=btn_text,
+            command=toggle_api_server,
+            width=100,
+            height=32,
+            fg_color=btn_color
+        )
+        api_toggle_btn.pack(side="left", padx=5)
+
+        # 监听地址 + 端口 (同一行)
+        ctk.CTkLabel(settings_win, text="监听地址:", font=("Microsoft YaHei UI", 12)).grid(
+            row=11, column=0, padx=(40, 10), pady=8, sticky="w"
+        )
+
+        listen_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
+        listen_frame.grid(row=11, column=1, columnspan=2, padx=10, pady=8, sticky="w")
+
+        listen_host_entry = ctk.CTkEntry(listen_frame, width=150,
+                                          placeholder_text="127.0.0.1")
+        listen_host_entry.insert(0, self.config.get("api.host", "127.0.0.1"))
+        listen_host_entry.pack(side="left", padx=(0, 5))
+
+        ctk.CTkLabel(listen_frame, text=":", font=("Microsoft YaHei UI", 14)).pack(side="left")
+
+        listen_port_entry = ctk.CTkEntry(listen_frame, width=80, placeholder_text="18000")
+        listen_port_entry.insert(0, str(self.config.get("api.port", 8000)))
+        listen_port_entry.pack(side="left", padx=(0, 8))
+
+        def confirm_listen_addr():
+            import ipaddress
+            host = listen_host_entry.get().strip()
+            port_str = listen_port_entry.get().strip()
+
+            # 校验 host：只允许 0.0.0.0 / 127.0.0.1 / 有效 IP
+            if not host:
+                ToastNotification.show(settings_win, "⚠ 监听地址不能为空", duration=1500)
+                return
+            if host not in ("0.0.0.0", "127.0.0.1", "localhost", "::1", "::"):
+                try:
+                    ipaddress.ip_address(host)
+                except ValueError:
+                    ToastNotification.show(settings_win, "⚠ 无效的监听地址", duration=2000)
+                    return
+
+            # 0.0.0.0 安全警告
+            if host == "0.0.0.0":
+                result = messagebox.askyesno(
+                    "安全警告",
+                    "监听 0.0.0.0 将允许局域网内所有设备访问 API 服务。\n\n是否继续？",
+                    parent=settings_win
+                )
+                if not result:
+                    return
+
+            # 校验端口
+            port_valid, port_info = _validate_port(port_str)
+            if not port_valid:
+                ToastNotification.show(settings_win, f"⚠ 端口无效: {port_info}", duration=2000)
+                return
+
+            port = int(port_str)
+            self.config.set("api.host", host)
+            self.config.set("api.port", port)
+            self.config.save_config()
+            ToastNotification.show(settings_win, f"✓ 监听地址已设置为 {host}:{port}", duration=1500)
+            self.log(f"API 监听地址已设置为: {host}:{port}")
+
+        listen_host_entry.bind("<Return>", lambda e: confirm_listen_addr())
+        listen_port_entry.bind("<Return>", lambda e: confirm_listen_addr())
+
+        ctk.CTkButton(
+            listen_frame, text="确认", command=confirm_listen_addr, width=60, height=28
+        ).pack(side="left", padx=5)
+
+        ctk.CTkLabel(
+            listen_frame,
+            text="(重启API后生效)",
+            font=("Microsoft YaHei UI", 10),
+            text_color="gray"
+        ).pack(side="left", padx=5)
+
+        # ========== 启动模式设置 ==========
+        ctk.CTkLabel(settings_win, text="启动模式", font=("Microsoft YaHei UI", 14)).grid(
+            row=12, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        startup_mode_map = {
+            "ui": "纯界面模式",
+            "ui+api": "界面 + API 服务",
+            "api": "纯 API 服务（无界面）"
+        }
+        startup_mode_reverse = {v: k for k, v in startup_mode_map.items()}
+
+        # 推断当前模式：兼容旧版本（如果 startup_mode 未设置，检查 api.enabled）
+        current_startup = self.config.get("app.startup_mode", "ui")
+        if current_startup == "ui" and self.config.get("api.enabled", False):
+            current_startup = "ui+api"
+        startup_display = startup_mode_map.get(current_startup, "纯界面模式")
+        startup_mode_var = ctk.StringVar(settings_win, value=startup_display)
+
+        def on_startup_mode_change(choice):
+            mode = startup_mode_reverse.get(choice, "ui")
+
+            # 纯 API 模式警告
+            if mode == "api":
+                result = messagebox.askyesno(
+                    "警告",
+                    "纯 API 模式下程序启动后没有图形界面，仅提供 API 服务。\n\n"
+                    "如需恢复界面模式，需要手动编辑 config.json\n"
+                    "或使用命令行启动：python main.py（不带参数）\n\n"
+                    "确认切换到纯 API 模式？",
+                    parent=settings_win
+                )
+                if not result:
+                    startup_mode_var.set(startup_display)
+                    return
+
+            self.config.set("app.startup_mode", mode)
+            # 同步 api.enabled 保持一致
+            self.config.set("api.enabled", mode in ("ui+api", "api"))
+            self.config.save_config()
+
+            ToastNotification.show(
+                settings_win, f"✓ 启动模式: {choice}（重启后生效）", duration=2000
+            )
+            self.log(f"启动模式已设置为: {choice}")
+
+        ctk.CTkOptionMenu(
+            settings_win,
+            variable=startup_mode_var,
+            values=list(startup_mode_map.values()),
+            command=on_startup_mode_change,
+            width=250,
+            font=("Microsoft YaHei UI", 12)
+        ).grid(row=12, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # ========== 开机自动启动设置 ==========
+        ctk.CTkLabel(settings_win, text="开机自启", font=("Microsoft YaHei UI", 14)).grid(
+            row=13, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        # 读取注册表中的实际状态
+        from utils.AutoStart import is_auto_start_enabled, set_auto_start
+        auto_start_var = ctk.BooleanVar(settings_win, value=is_auto_start_enabled())
+
+        def save_auto_start():
+            enabled = auto_start_var.get()
+            success = set_auto_start(enabled)
+            if success:
+                self.config.set("ui.auto_start", enabled)
+                self.config.save_config()
+                # 同步托盘菜单
+                if hasattr(self, 'tray_manager'):
+                    self.tray_manager.set_auto_start_status(enabled)
+                status = "启用" if enabled else "禁用"
+                ToastNotification.show(settings_win, f"✓ 开机自动启动已{status}", duration=1500)
+                self.log(f"开机自动启动已{status}")
+            else:
+                # 设置失败，恢复复选框状态
+                auto_start_var.set(not enabled)
+                ToastNotification.show(settings_win, "✗ 设置失败，请检查权限", duration=2000)
+
+        auto_start_checkbox = ctk.CTkCheckBox(
+            settings_win,
+            text="开机时自动启动（最小化到托盘）",
+            variable=auto_start_var,
+            command=save_auto_start
+        )
+        auto_start_checkbox.grid(row=13, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        # ========== 关闭行为设置 ==========
+        ctk.CTkLabel(settings_win, text="关闭行为", font=("Microsoft YaHei UI", 14)).grid(
+            row=14, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        close_behavior_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
+        close_behavior_frame.grid(row=14, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
+        current_choice = self.config.get("ui.minimize_to_tray", None)
+        if current_choice is True:
+            choice_text = "最小化到托盘"
+        elif current_choice is False:
+            choice_text = "直接退出"
+        else:
+            choice_text = "每次询问"
+
+        close_choice_label = ctk.CTkLabel(
+            close_behavior_frame,
+            text=f"当前: {choice_text}",
+            font=("Microsoft YaHei UI", 12)
+        )
+        close_choice_label.pack(side="left", padx=(0, 10))
+
+        def reset_close_behavior():
+            self.config.set("ui.minimize_to_tray", None)
+            self.config.save_config()
+            close_choice_label.configure(text="当前: 每次询问")
+            ToastNotification.show(settings_win, "✓ 已重置，下次关闭时将重新询问", duration=1500)
+            self.log("关闭行为已重置为每次询问")
+
+        ctk.CTkButton(
+            close_behavior_frame,
+            text="重置",
+            command=reset_close_behavior,
+            width=60,
+            height=28
+        ).pack(side="left", padx=5)
 
         # ========== 关闭按钮 ==========
         ctk.CTkButton(
             settings_win,
             text=self.lang.get("close"),
             command=settings_win.destroy,
-            width=100,
+            width=120,
             height=35
-        ).grid(row=6, column=0, columnspan=3, pady=(25, 20))
+        ).grid(row=15, column=0, columnspan=3, pady=(25, 20))
 
     def _save_language(self, language, parent_win):
         """保存语言设置"""
@@ -1359,11 +2417,24 @@ class MainWindow(ctk.CTk):
         self.log(f"界面语言已设置为: {language}")
 
     def log(self, message: str):
-        """添加日志"""
+        """添加日志（线程安全）"""
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert("end", f"[{timestamp}] {message}\n")
-        self.log_text.see("end")
+        line = f"[{timestamp}] {message}\n"
+
+        def _insert():
+            self.log_text.insert("end", line)
+            self.log_text.see("end")
+
+        # 如果不在主线程，调度到主线程执行
+        try:
+            if threading.current_thread() is not threading.main_thread():
+                self.after(0, _insert)
+            else:
+                _insert()
+        except RuntimeError:
+            # 窗口已销毁
+            pass
 
     def clear_log(self):
         """清空日志"""

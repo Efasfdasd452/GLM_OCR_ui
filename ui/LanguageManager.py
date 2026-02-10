@@ -568,6 +568,41 @@ class LanguageManager:
             "it": "✓ Prompt screenshot disabilitato",
             "ru": "✓ Подсказка скриншота отключена"
         },
+
+        # ========== 字体设置 ==========
+        "font_family": {
+            "zh_CN": "字体:",
+            "zh_HK": "字體:",
+            "zh_TW": "字體:",
+            "en": "Font:",
+            "fr": "Police:",
+            "de": "Schriftart:",
+            "ja": "フォント:",
+            "it": "Carattere:",
+            "ru": "Шрифт:"
+        },
+        "font_size_label": {
+            "zh_CN": "字体大小:",
+            "zh_HK": "字體大小:",
+            "zh_TW": "字體大小:",
+            "en": "Font Size:",
+            "fr": "Taille de police:",
+            "de": "Schriftgröße:",
+            "ja": "フォントサイズ:",
+            "it": "Dimensione carattere:",
+            "ru": "Размер шрифта:"
+        },
+        "toast_font_saved": {
+            "zh_CN": "✓ 字体已设置为",
+            "zh_HK": "✓ 字體已設定為",
+            "zh_TW": "✓ 字體已設定為",
+            "en": "✓ Font set to",
+            "fr": "✓ Police définie sur",
+            "de": "✓ Schriftart eingestellt auf",
+            "ja": "✓ フォントを設定しました",
+            "it": "✓ Carattere impostato su",
+            "ru": "✓ Шрифт установлен на"
+        },
     }
 
     def __init__(self, language="简体中文"):

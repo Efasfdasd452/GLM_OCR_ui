@@ -30,7 +30,7 @@
     "local_path": "/path/to/your/local/GLM-OCR",
     "use_local_only": true,
     "device": "auto",
-    "torch_dtype": "auto",
+    "dtype": "auto",
     "max_new_tokens": 8192
   }
 }

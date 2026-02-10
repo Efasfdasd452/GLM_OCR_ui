@@ -3,6 +3,8 @@
 """
 import os
 import json
+import copy
+import threading
 from pathlib import Path
 from typing import Dict, Any
 
@@ -16,7 +18,7 @@ class Config:
     "name": "zai-org/GLM-OCR",
     "local_path": "./models/GLM-OCR",
     "device": "auto",
-    "torch_dtype": "float16",
+    "dtype": "float16",
     "max_new_tokens": 2048,
     "max_new_tokens_limit": 8192,
     "use_local_only": True,
@@ -36,10 +38,27 @@ class Config:
   },
   "ui": {
     "theme": "light",
+    "font_family": "Microsoft YaHei UI",
     "font_size": 12,
     "window_size": "1200x800",
     "language": "简体中文",
-    "screenshot_reminder_disabled": False
+    "screenshot_reminder_disabled": False,
+    "minimize_to_tray": None,
+    "auto_start": False
+  },
+  "api": {
+    "enabled": False,
+    "host": "127.0.0.1",
+    "port": 8000,
+    "mode": "local",
+    "remote_url": "http://127.0.0.1:8000",
+    "remote_host": "127.0.0.1",
+    "remote_port": 8000,
+    "auto_load_model": True,
+    "max_image_size_mb": 10
+  },
+  "app": {
+    "startup_mode": "ui"
   }
 }
     README_STR = """
@@ -63,7 +82,7 @@ class Config:
                   cuda  - 强制使用显卡
                   cpu   - 强制使用CPU
 
-    torch_dtype   模型精度
+    dtype   模型精度
                   float16 - 半精度（推荐，省显存）
                   auto    - 自动选择
                   float32 - 全精度（更准但占用翻倍）
@@ -122,6 +141,8 @@ class Config:
     window_size   窗口尺寸，默认 1200x800
     """
 
+
+    _save_lock = threading.Lock()
 
     def __init__(self, config_path: str = None, base_dir: Path = None):
         """初始化配置"""
@@ -196,40 +217,45 @@ class Config:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
-                with open(self.readme_path_utf8, 'w', encoding='utf-8') as f:
-                    f.write(self.README_STR)
-                with open(self.readme_path_gbk, 'w', encoding='gbk') as f:
-                    f.write(self.README_STR)
                 print(f"✓ 已加载配置文件: {self.config_path}")
-                return self._merge_config(self.DEFAULT_CONFIG.copy(), loaded_config)
+                config = self._merge_config(copy.deepcopy(self.DEFAULT_CONFIG), loaded_config)
             except Exception as e:
                 print(f"加载配置失败: {e}, 使用默认配置")
-                return self.DEFAULT_CONFIG.copy()
+                config = copy.deepcopy(self.DEFAULT_CONFIG)
         else:
             print(f"⚠ 未找到配置文件: {self.config_path}，自动创建默认配置")
-            config = self.DEFAULT_CONFIG.copy()
-            # 自动生成默认配置文件到程序目录
+            config = copy.deepcopy(self.DEFAULT_CONFIG)
             try:
                 with open(self.config_path, 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
-                with open(self.readme_path_utf8,'w',encoding='utf-8') as f:
-                    f.write(self.README_STR)
-                with open(self.readme_path_gbk,'w',encoding='gbk') as f:
-                    f.write(self.README_STR)
                 print(f"✓ 已创建默认配置文件: {self.config_path}")
             except Exception as e:
                 print(f"⚠ 创建配置文件失败: {e}")
-            return config
+
+        # 写 readme 文件（独立于配置加载，失败不影响主流程）
+        self._write_readme_files()
+        return config
+
+    def _write_readme_files(self):
+        """生成说明文件（失败不影响程序运行）"""
+        try:
+            with open(self.readme_path_utf8, 'w', encoding='utf-8') as f:
+                f.write(self.README_STR)
+            with open(self.readme_path_gbk, 'w', encoding='gbk') as f:
+                f.write(self.README_STR)
+        except Exception:
+            pass
 
     def save_config(self) -> bool:
-        """保存配置到文件"""
-        try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=2, ensure_ascii=False)
-            return True
-        except Exception as e:
-            print(f"保存配置失败: {e}")
-            return False
+        """保存配置到文件（线程安全）"""
+        with self._save_lock:
+            try:
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.config, f, indent=2, ensure_ascii=False)
+                return True
+            except Exception as e:
+                print(f"保存配置失败: {e}")
+                return False
 
     def _merge_config(self, default: Dict, loaded: Dict) -> Dict:
         """递归合并配置"""
@@ -252,15 +278,16 @@ class Config:
         return value
 
     def set(self, key_path: str, value):
-        """设置配置值"""
-        keys = key_path.split('.')
-        config = self.config
-        for key in keys[:-1]:
-            if key not in config:
-                config[key] = {}
-            config = config[key]
-        config[keys[-1]] = value
+        """设置配置值（线程安全）"""
+        with self._save_lock:
+            keys = key_path.split('.')
+            config = self.config
+            for key in keys[:-1]:
+                if key not in config:
+                    config[key] = {}
+                config = config[key]
+            config[keys[-1]] = value
 
     def reset_to_default(self):
         """重置为默认配置"""
-        self.config = self.DEFAULT_CONFIG.copy()
+        self.config = copy.deepcopy(self.DEFAULT_CONFIG)
