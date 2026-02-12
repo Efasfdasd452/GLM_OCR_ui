@@ -76,6 +76,7 @@ class MainWindow(ctk.CTk):
         self._recognizing = False
         self._loading_anim_id = None
         self._model_loading = False  # 防止并发加载模型
+        self._current_image = None  # 保存当前识别的图片，用于公式修复
 
         # 绑定快捷键
         self.bind_shortcuts()
@@ -102,9 +103,9 @@ class MainWindow(ctk.CTk):
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
 
-        # 窗口尺寸
-        window_width = 1200
-        window_height = 800
+        # 窗口尺寸（使用黄金分割比 φ ≈ 1.618）
+        window_width = 1280
+        window_height = int(window_width / 1.618)  # ≈ 791px
 
         # 居中显示
         x = (screen_width - window_width) // 2
@@ -213,6 +214,7 @@ class MainWindow(ctk.CTk):
         # 更新快速识别和复制结果按钮
         self.btn_quick_ocr.configure(text=self.lang.get("quick_recognition"))
         self.btn_copy_result.configure(text=self.lang.get("copy_result"))
+        self.btn_fix_formula.configure(text=self.lang.get("fix_formula"))
 
         # 更新单图OCR标签页
         self.image_label.configure(text=self.lang.get("image_preview_hint"))
@@ -422,10 +424,11 @@ class MainWindow(ctk.CTk):
         self.image_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
         self.image_frame.grid_columnconfigure(0, weight=1)
 
+        # 图片预览区高度使用黄金分割比（约为可用空间的 0.382）
         self.image_label = ctk.CTkLabel(
             self.image_frame,
             text=self.lang.get("image_preview_hint"),
-            height=200,
+            height=260,
             fg_color="gray85"
         )
         self.image_label.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
@@ -468,6 +471,18 @@ class MainWindow(ctk.CTk):
             fg_color="#1f6aa5"
         )
         self.btn_copy_result.grid(row=0, column=2, padx=5)
+
+        # 修复公式按钮
+        self.btn_fix_formula = ctk.CTkButton(
+            result_header_frame,
+            text=self.lang.get("fix_formula"),
+            command=self.fix_formula,
+            width=120,
+            height=35,
+            font=self._font(1),
+            fg_color="#d97706"
+        )
+        self.btn_fix_formula.grid(row=0, column=3, padx=5)
 
         # 结果文本框
         self.result_text = ctk.CTkTextbox(self.tab_single, height=300)
@@ -1510,6 +1525,9 @@ class MainWindow(ctk.CTk):
         if self._recognizing:
             return
 
+        # 保存当前图片用于公式修复
+        self._current_image = image
+
         # 开始加载动画
         self._start_loading_animation()
 
@@ -1596,6 +1614,249 @@ class MainWindow(ctk.CTk):
             self.log("✓ 结果已复制到剪贴板")
         else:
             messagebox.showwarning("警告", "没有可复制的内容")
+
+    def fix_formula(self):
+        """使用公式识别模式重新识别图片，修复数学公式错误"""
+        if not self._current_image:
+            messagebox.showwarning(self.lang.get("confirm"), self.lang.get("fix_formula_prompt"))
+            return
+
+        if not self.model_loaded:
+            messagebox.showwarning(self.lang.get("confirm"), self.lang.get("model_not_loaded"))
+            return
+
+        # 防止重复识别
+        if self._recognizing:
+            messagebox.showinfo(self.lang.get("confirm"), "正在识别中，请稍候...")
+            return
+
+        # 检查是否设置了默认模式
+        saved_mode = self.config.get("ui.fix_formula_mode", None)
+        if saved_mode:
+            # 直接使用保存的模式
+            original_result = self.result_text.get("1.0", "end-1c").strip()
+            self._do_fix_formula(original_result, mode=saved_mode)
+            return
+
+        # 保存原始识别结果
+        original_result = self.result_text.get("1.0", "end-1c").strip()
+
+        # 询问用户是替换还是追加
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(self.lang.get("fix_formula_title"))
+        dialog.geometry("450x280")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_force()
+
+        # 居中显示
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 450) // 2
+        y = self.winfo_y() + (self.winfo_height() - 280) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # 标题
+        ctk.CTkLabel(
+            dialog,
+            text=self.lang.get("fix_formula_title"),
+            font=self._font(6, bold=True)
+        ).pack(pady=(20, 10))
+
+        # 说明
+        ctk.CTkLabel(
+            dialog,
+            text=self.lang.get("fix_formula_prompt"),
+            font=self._font(1)
+        ).pack(pady=(0, 10))
+
+        # "下次不再提醒"复选框
+        dont_ask_var = ctk.BooleanVar(dialog, value=False)
+
+        # 按钮区
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(0, 10))
+
+        def replace_mode():
+            mode = "replace"
+            if dont_ask_var.get():
+                self.config.set("ui.fix_formula_mode", mode)
+                self.config.save_config()
+                self.log(f"已保存公式修复默认模式: {mode}")
+            dialog.destroy()
+            self._do_fix_formula(original_result, mode=mode)
+
+        def append_mode():
+            mode = "append"
+            if dont_ask_var.get():
+                self.config.set("ui.fix_formula_mode", mode)
+                self.config.save_config()
+                self.log(f"已保存公式修复默认模式: {mode}")
+            dialog.destroy()
+            self._do_fix_formula(original_result, mode=mode)
+
+        ctk.CTkButton(
+            btn_frame,
+            text=self.lang.get("replace_original"),
+            command=replace_mode,
+            width=150,
+            height=40,
+            fg_color="#d97706",
+            font=self._font(1)
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            btn_frame,
+            text=self.lang.get("append_to_original"),
+            command=append_mode,
+            width=150,
+            height=40,
+            fg_color="#059669",
+            font=self._font(1)
+        ).pack(side="left", padx=10)
+
+        # 提示信息
+        ctk.CTkLabel(
+            dialog,
+            text=self.lang.get("fix_formula_hint"),
+            font=self._font(-1),
+            text_color="gray",
+            justify="left"
+        ).pack(pady=(5, 10))
+
+        # "下次不再提醒"复选框
+        ctk.CTkCheckBox(
+            dialog,
+            text=self.lang.get("dont_show_again"),
+            variable=dont_ask_var,
+            font=self._font()
+        ).pack(pady=(5, 10))
+
+        # ESC 关闭对话框
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+    def _do_fix_formula(self, original_result: str, mode: str = "append"):
+        """执行公式修复的实际逻辑
+
+        Args:
+            original_result: 原始识别结果
+            mode: "replace" 替换模式，"append" 追加模式
+        """
+        self.log(f"开始修复公式（{mode} 模式）...")
+        self._start_loading_animation()
+
+        def fix_thread():
+            try:
+                if not self.ocr_service:
+                    self.log("✗ OCR 服务未就绪")
+                    self.after(0, lambda: messagebox.showerror("错误", "OCR 服务未就绪"))
+                    return
+
+                # 使用公式识别 prompt 重新识别
+                result = self.ocr_service.recognize_image(
+                    self._current_image,
+                    prompt="Formula Recognition:",
+                    max_new_tokens=self.current_tokens
+                )
+
+                if result:
+                    if mode == "append":
+                        # 追加模式：保留原结果，添加分隔符和公式识别结果
+                        combined_result = (
+                            f"{original_result}\n\n"
+                            f"{'='*50}\n"
+                            f"{self.lang.get('formula_result_header')}\n"
+                            f"{'='*50}\n\n"
+                            f"{result}"
+                        )
+                        self.after(0, lambda r=combined_result: self._show_result(r))
+                        self.log("✓ 公式识别完成（已追加到原结果）")
+                    else:
+                        # 替换模式：完全替换为公式识别结果
+                        self.after(0, lambda r=result: self._show_result(r))
+                        self.log("✓ 公式识别完成（已替换原结果）")
+
+                    # 显示完成提示（带"下次不再提醒"选项）
+                    self.after(0, self._show_formula_fix_completion)
+                else:
+                    self.after(0, lambda: self._show_result(""))
+                    self.log("✗ 公式识别失败")
+                    self.after(0, lambda: messagebox.showerror("错误", "公式识别失败"))
+            except Exception as e:
+                self.log(f"✗ 公式识别异常: {e}")
+                self.after(0, lambda: self._show_result(""))
+                self.after(0, lambda err=str(e): messagebox.showerror("错误", f"公式识别失败:\n{err}"))
+            finally:
+                self._stop_loading_animation()
+
+        threading.Thread(target=fix_thread, daemon=True).start()
+
+    def _show_formula_fix_completion(self):
+        """显示公式修复完成对话框（带"下次不再提醒"选项）"""
+        # 检查是否已禁用提示
+        if self.config.get("ui.fix_formula_completion_reminder_disabled", False):
+            return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(self.lang.get("confirm"))
+        dialog.geometry("520x320")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_force()
+
+        # 居中显示
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 520) // 2
+        y = self.winfo_y() + (self.winfo_height() - 320) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # 标题
+        ctk.CTkLabel(
+            dialog,
+            text="✓ " + self.lang.get("fix_formula_success"),
+            font=self._font(6, bold=True),
+            text_color="green"
+        ).pack(pady=(20, 10))
+
+        # 提示信息
+        ctk.CTkLabel(
+            dialog,
+            text=self.lang.get("fix_formula_tips"),
+            font=self._font(1),
+            justify="left",
+            wraplength=460
+        ).pack(pady=(10, 20), padx=20)
+
+        # "下次不再提醒"复选框
+        dont_show_var = ctk.BooleanVar(dialog, value=False)
+        ctk.CTkCheckBox(
+            dialog,
+            text=self.lang.get("dont_show_again"),
+            variable=dont_show_var,
+            font=self._font()
+        ).pack(pady=(0, 10))
+
+        # 确认按钮
+        def on_confirm():
+            if dont_show_var.get():
+                self.config.set("ui.fix_formula_completion_reminder_disabled", True)
+                self.config.save_config()
+                self.log("已禁用公式修复完成提示")
+            dialog.destroy()
+
+        ctk.CTkButton(
+            dialog,
+            text=self.lang.get("confirm"),
+            command=on_confirm,
+            width=120,
+            height=35,
+            fg_color="green",
+            font=self._font(1)
+        ).pack(pady=(5, 20))
+
+        # 按 Enter 键也能确认
+        dialog.bind("<Return>", lambda e: on_confirm())
+        # ESC 关闭对话框
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
 
     def add_batch_files(self):
         """打开文件选择对话框，添加图片文件到批量处理列表。"""
@@ -2025,9 +2286,37 @@ class MainWindow(ctk.CTk):
         )
         screenshot_reminder_checkbox.grid(row=7, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
+        # ========== 公式修复完成提示设置 ==========
+        ctk.CTkLabel(settings_win, text="公式修复提示:", font=("Microsoft YaHei UI", 14)).grid(
+            row=8, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+
+        formula_completion_var = ctk.BooleanVar(
+            settings_win,
+            value=not self.config.get("ui.fix_formula_completion_reminder_disabled", False)
+        )
+
+        def save_formula_completion_reminder():
+            self.config.set("ui.fix_formula_completion_reminder_disabled", not formula_completion_var.get())
+            self.config.save_config()
+            if formula_completion_var.get():
+                toast_text = "✓ 公式修复完成提示已启用"
+            else:
+                toast_text = "✓ 公式修复完成提示已禁用"
+            ToastNotification.show(settings_win, toast_text, duration=1500)
+            self.log(f"公式修复完成提示已{'启用' if formula_completion_var.get() else '禁用'}")
+
+        formula_completion_checkbox = ctk.CTkCheckBox(
+            settings_win,
+            text="显示公式修复完成提示",
+            variable=formula_completion_var,
+            command=save_formula_completion_reminder
+        )
+        formula_completion_checkbox.grid(row=8, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+
         # ========== API 客户端模式设置 ==========
         ctk.CTkLabel(settings_win, text="客户端模式", font=("Microsoft YaHei UI", 14)).grid(
-            row=8, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=9, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         api_mode_var = ctk.StringVar(settings_win, value=self.config.get("api.mode", "local"))
@@ -2037,7 +2326,7 @@ class MainWindow(ctk.CTk):
             self.config.save_config()
             # 根据模式显示/隐藏远程 URL 框
             if mode == "remote":
-                remote_frame.grid(row=9, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+                remote_frame.grid(row=10, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
             else:
                 remote_frame.grid_forget()
             # 重新初始化服务
@@ -2050,7 +2339,7 @@ class MainWindow(ctk.CTk):
             values=["local", "remote"],
             command=on_mode_change,
             width=200
-        ).grid(row=8, column=1, padx=10, pady=12, sticky="w")
+        ).grid(row=9, column=1, padx=10, pady=12, sticky="w")
 
         # 远程地址配置框（仅远程模式显示）
         remote_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
@@ -2182,16 +2471,16 @@ class MainWindow(ctk.CTk):
 
         # 根据当前模式决定是否显示
         if api_mode_var.get() == "remote":
-            remote_frame.grid(row=9, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+            remote_frame.grid(row=10, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
 
         # ========== API 服务器设置 ==========
         ctk.CTkLabel(settings_win, text="API 服务器", font=("Microsoft YaHei UI", 14)).grid(
-            row=10, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=11, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         # API 状态和控制区
         api_control_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        api_control_frame.grid(row=10, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        api_control_frame.grid(row=11, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # 状态标签
         api_running = self.api_server_running
@@ -2242,11 +2531,11 @@ class MainWindow(ctk.CTk):
 
         # 监听地址 + 端口 (同一行)
         ctk.CTkLabel(settings_win, text="监听地址:", font=("Microsoft YaHei UI", 12)).grid(
-            row=11, column=0, padx=(40, 10), pady=8, sticky="w"
+            row=12, column=0, padx=(40, 10), pady=8, sticky="w"
         )
 
         listen_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        listen_frame.grid(row=11, column=1, columnspan=2, padx=10, pady=8, sticky="w")
+        listen_frame.grid(row=12, column=1, columnspan=2, padx=10, pady=8, sticky="w")
 
         listen_host_entry = ctk.CTkEntry(listen_frame, width=150,
                                           placeholder_text="127.0.0.1")
@@ -2314,7 +2603,7 @@ class MainWindow(ctk.CTk):
 
         # ========== 启动模式设置 ==========
         ctk.CTkLabel(settings_win, text="启动模式", font=("Microsoft YaHei UI", 14)).grid(
-            row=12, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=13, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         startup_mode_map = {
@@ -2365,11 +2654,11 @@ class MainWindow(ctk.CTk):
             command=on_startup_mode_change,
             width=250,
             font=("Microsoft YaHei UI", 12)
-        ).grid(row=12, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        ).grid(row=13, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # ========== 开机自动启动设置 ==========
         ctk.CTkLabel(settings_win, text="开机自启", font=("Microsoft YaHei UI", 14)).grid(
-            row=13, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=14, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         # 读取注册表中的实际状态
@@ -2399,15 +2688,15 @@ class MainWindow(ctk.CTk):
             variable=auto_start_var,
             command=save_auto_start
         )
-        auto_start_checkbox.grid(row=13, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        auto_start_checkbox.grid(row=14, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # ========== 关闭行为设置 ==========
         ctk.CTkLabel(settings_win, text="关闭行为", font=("Microsoft YaHei UI", 14)).grid(
-            row=14, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=15, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         close_behavior_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        close_behavior_frame.grid(row=14, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        close_behavior_frame.grid(row=15, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         current_choice = self.config.get("ui.minimize_to_tray", None)
         if current_choice is True:
@@ -2446,7 +2735,7 @@ class MainWindow(ctk.CTk):
             command=settings_win.destroy,
             width=120,
             height=35
-        ).grid(row=15, column=0, columnspan=3, pady=(25, 20))
+        ).grid(row=16, column=0, columnspan=3, pady=(25, 20))
 
     def _save_language(self, language, parent_win):
         """保存语言设置

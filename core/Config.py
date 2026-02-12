@@ -43,7 +43,9 @@ class Config:
     "language": "简体中文",
     "screenshot_reminder_disabled": False,
     "minimize_to_tray": None,
-    "auto_start": False
+    "auto_start": False,
+    "fix_formula_mode": None,
+    "fix_formula_completion_reminder_disabled": False
   },
   "api": {
     "enabled": False,

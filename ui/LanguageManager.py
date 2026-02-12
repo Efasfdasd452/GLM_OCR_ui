@@ -248,6 +248,17 @@ class LanguageManager:
             "it": "📋 Copia risultato",
             "ru": "📋 Копировать результат"
         },
+        "fix_formula": {
+            "zh_CN": "🔧 修复公式",
+            "zh_HK": "🔧 修復公式",
+            "zh_TW": "🔧 修復公式",
+            "en": "🔧 Fix Formula",
+            "fr": "🔧 Corriger la formule",
+            "de": "🔧 Formel korrigieren",
+            "ja": "🔧 数式を修正",
+            "it": "🔧 Correggi formula",
+            "ru": "🔧 Исправить формулу"
+        },
         "select_image": {
             "zh_CN": "选择图片",
             "zh_HK": "選擇圖片",
@@ -602,6 +613,107 @@ class LanguageManager:
             "ja": "✓ フォントを設定しました",
             "it": "✓ Carattere impostato su",
             "ru": "✓ Шрифт установлен на"
+        },
+
+        # ========== 公式修复功能 ==========
+        "fix_formula_title": {
+            "zh_CN": "🔧 公式修复模式",
+            "zh_HK": "🔧 公式修復模式",
+            "zh_TW": "🔧 公式修復模式",
+            "en": "🔧 Formula Fix Mode",
+            "fr": "🔧 Mode de correction de formule",
+            "de": "🔧 Formelkorrekturmodus",
+            "ja": "🔧 数式修正モード",
+            "it": "🔧 Modalità correzione formula",
+            "ru": "🔧 Режим исправления формулы"
+        },
+        "fix_formula_prompt": {
+            "zh_CN": "请选择公式识别结果的处理方式：",
+            "zh_HK": "請選擇公式識別結果的處理方式：",
+            "zh_TW": "請選擇公式識別結果的處理方式：",
+            "en": "Please select how to handle formula recognition results:",
+            "fr": "Veuillez sélectionner comment traiter les résultats de reconnaissance de formule:",
+            "de": "Bitte wählen Sie, wie Formelergebnisse behandelt werden sollen:",
+            "ja": "数式認識結果の処理方法を選択してください：",
+            "it": "Seleziona come gestire i risultati del riconoscimento formula:",
+            "ru": "Выберите, как обрабатывать результаты распознавания формулы:"
+        },
+        "replace_original": {
+            "zh_CN": "替换原结果",
+            "zh_HK": "替換原結果",
+            "zh_TW": "取代原結果",
+            "en": "Replace Original",
+            "fr": "Remplacer l'original",
+            "de": "Original ersetzen",
+            "ja": "元の結果を置換",
+            "it": "Sostituisci originale",
+            "ru": "Заменить оригинал"
+        },
+        "append_to_original": {
+            "zh_CN": "追加到原结果后",
+            "zh_HK": "追加到原結果後",
+            "zh_TW": "追加到原結果後",
+            "en": "Append to Original",
+            "fr": "Ajouter à l'original",
+            "de": "An Original anhängen",
+            "ja": "元の結果に追加",
+            "it": "Aggiungi all'originale",
+            "ru": "Добавить к оригиналу"
+        },
+        "fix_formula_hint": {
+            "zh_CN": "替换：仅保留公式识别结果\n追加：保留原文本+添加公式修复",
+            "zh_HK": "替換：僅保留公式識別結果\n追加：保留原文本+添加公式修復",
+            "zh_TW": "取代：僅保留公式識別結果\n追加：保留原文字+新增公式修復",
+            "en": "Replace: Keep only formula result\nAppend: Keep original text + add formula fix",
+            "fr": "Remplacer: Garder seulement le résultat de formule\nAjouter: Garder le texte original + ajouter la correction",
+            "de": "Ersetzen: Nur Formelergebnis behalten\nAnhängen: Original + Formelkorrektur",
+            "ja": "置換: 数式結果のみ保持\n追加: 元のテキスト + 数式修正を追加",
+            "it": "Sostituisci: Mantieni solo risultato formula\nAggiungi: Mantieni testo originale + aggiungi correzione",
+            "ru": "Заменить: Сохранить только результат формулы\nДобавить: Сохранить оригинал + добавить исправление"
+        },
+        "fix_formula_dont_show": {
+            "zh_CN": "下次直接使用 {0} 模式，不再询问",
+            "zh_HK": "下次直接使用 {0} 模式，不再詢問",
+            "zh_TW": "下次直接使用 {0} 模式，不再詢問",
+            "en": "Use {0} mode directly next time, don't ask again",
+            "fr": "Utiliser directement le mode {0} la prochaine fois, ne plus demander",
+            "de": "Nächstes Mal direkt {0}-Modus verwenden, nicht mehr fragen",
+            "ja": "次回から {0} モードを直接使用し、再度尋ねない",
+            "it": "Usa direttamente la modalità {0} la prossima volta, non chiedere più",
+            "ru": "В следующий раз использовать режим {0} напрямую, больше не спрашивать"
+        },
+        "formula_result_header": {
+            "zh_CN": "【公式识别结果】",
+            "zh_HK": "【公式識別結果】",
+            "zh_TW": "【公式識別結果】",
+            "en": "[Formula Recognition Result]",
+            "fr": "[Résultat de reconnaissance de formule]",
+            "de": "[Formelerkennungsergebnis]",
+            "ja": "【数式認識結果】",
+            "it": "[Risultato riconoscimento formula]",
+            "ru": "[Результат распознавания формулы]"
+        },
+        "fix_formula_success": {
+            "zh_CN": "公式识别完成！",
+            "zh_HK": "公式識別完成！",
+            "zh_TW": "公式識別完成！",
+            "en": "Formula recognition complete!",
+            "fr": "Reconnaissance de formule terminée!",
+            "de": "Formelerkennung abgeschlossen!",
+            "ja": "数式認識完了！",
+            "it": "Riconoscimento formula completato!",
+            "ru": "Распознавание формулы завершено!"
+        },
+        "fix_formula_tips": {
+            "zh_CN": "提示：如果结果仍不理想，可以尝试：\n1. 调整 Token 数量到更大值\n2. 使用更清晰的图片\n3. 重新截图确保公式清晰可见",
+            "zh_HK": "提示：如果結果仍不理想，可以嘗試：\n1. 調整 Token 數量到更大值\n2. 使用更清晰的圖片\n3. 重新截圖確保公式清晰可見",
+            "zh_TW": "提示：如果結果仍不理想，可以嘗試：\n1. 調整 Token 數量到更大值\n2. 使用更清晰的圖片\n3. 重新截圖確保公式清晰可見",
+            "en": "Tip: If result is still not ideal, try:\n1. Increase Token count\n2. Use clearer image\n3. Retake screenshot ensuring formula is clear",
+            "fr": "Astuce: Si le résultat n'est toujours pas idéal, essayez:\n1. Augmenter le nombre de tokens\n2. Utiliser une image plus claire\n3. Reprendre la capture en assurant que la formule est claire",
+            "de": "Tipp: Wenn das Ergebnis noch nicht ideal ist, versuchen Sie:\n1. Token-Anzahl erhöhen\n2. Klareres Bild verwenden\n3. Screenshot erneut aufnehmen und sicherstellen, dass die Formel klar ist",
+            "ja": "ヒント: 結果が理想的でない場合は、次のことを試してください：\n1. トークン数を増やす\n2. より鮮明な画像を使用\n3. 数式が鮮明に見えるようにスクリーンショットを撮り直す",
+            "it": "Suggerimento: Se il risultato non è ancora ideale, prova:\n1. Aumenta il conteggio Token\n2. Usa un'immagine più chiara\n3. Rifai lo screenshot assicurandoti che la formula sia chiara",
+            "ru": "Совет: Если результат все еще не идеальный, попробуйте:\n1. Увеличить количество токенов\n2. Использовать более четкое изображение\n3. Переснять скриншот, убедившись, что формула четкая"
         },
     }
 

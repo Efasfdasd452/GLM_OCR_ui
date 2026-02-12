@@ -29,7 +29,9 @@
     "language": "简体中文",
     "screenshot_reminder_disabled": true,
     "minimize_to_tray": null,
-    "auto_start": true
+    "auto_start": true,
+    "fix_formula_mode": null,
+    "fix_formula_completion_reminder_disabled": false
   },
   "api": {
     "enabled": true,
