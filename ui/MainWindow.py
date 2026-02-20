@@ -85,6 +85,11 @@ class MainWindow(ctk.CTk):
         self._model_loading = False  # 防止并发加载模型
         self._current_image = None  # 保存当前识别的图片，用于公式修复
 
+        # 卸载动画状态
+        self._unloading = False
+        self._unload_anim_id = None
+        self._unload_anim_frame = 0
+
         # 绑定快捷键
         self.bind_shortcuts()
 
@@ -143,11 +148,13 @@ class MainWindow(ctk.CTk):
         """应用字体设置到所有 UI 组件"""
         # 侧边栏
         self.logo_label.configure(font=self._font(12, bold=True))
+        self.logo_subtitle.configure(font=self._font(-1))
         for btn in (self.btn_screenshot, self.btn_clipboard, self.btn_batch,
                      self.btn_folder, self.btn_pdf_ocr, self.btn_settings,
                      self.btn_load_model):
             btn.configure(font=self._font())
-        self.model_status_label.configure(font=self._font())
+        self.btn_theme.configure(font=self._font())
+        self.model_status_label.configure(font=self._font(-1))
 
         # 控制栏
         self.prompt_label.configure(font=self._font())
@@ -193,21 +200,21 @@ class MainWindow(ctk.CTk):
         # 更新窗口标题
         self.title(self.lang.get("window_title"))
 
-        # 更新侧边栏按钮
-        self.btn_screenshot.configure(text=self.lang.get("screenshot_ocr"))
-        self.btn_clipboard.configure(text=self.lang.get("clipboard_ocr"))
-        self.btn_batch.configure(text=self.lang.get("batch_ocr"))
-        self.btn_folder.configure(text=self.lang.get("folder_ocr"))
-        self.btn_pdf_ocr.configure(text=self.lang.get("document_ocr"))
-        self.btn_settings.configure(text=self.lang.get("settings"))
+        # 更新侧边栏按钮（保留 emoji 前缀）
+        self.btn_screenshot.configure(text=f"📷  {self.lang.get('screenshot_ocr')}")
+        self.btn_clipboard.configure(text=f"📋  {self.lang.get('clipboard_ocr')}")
+        self.btn_batch.configure(text=f"📦  {self.lang.get('batch_ocr')}")
+        self.btn_folder.configure(text=f"📁  {self.lang.get('folder_ocr')}")
+        self.btn_pdf_ocr.configure(text=f"📄  {self.lang.get('document_ocr')}")
+        self.btn_settings.configure(text=f"⚙️  {self.lang.get('settings')}")
 
         # 更新模型状态
         if self.model_loaded:
-            self.model_status_label.configure(text=self.lang.get("model_loaded"))
-            self.btn_load_model.configure(text=self.lang.get("unload_model"))
+            self._set_model_status(self.lang.get("model_loaded"), "ok")
+            self.btn_load_model.configure(text=f"■  {self.lang.get('unload_model')}")
         else:
-            self.model_status_label.configure(text=self.lang.get("model_not_loaded"))
-            self.btn_load_model.configure(text=self.lang.get("load_model"))
+            self._set_model_status(self.lang.get("model_not_loaded"), "error")
+            self.btn_load_model.configure(text=f"▶  {self.lang.get('load_model')}")
 
         # 更新控制栏
         self.prompt_label.configure(text=self.lang.get("recognition_type"))
@@ -252,9 +259,10 @@ class MainWindow(ctk.CTk):
 
     def create_sidebar(self):
         """创建侧边栏"""
-        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsw", padx=0, pady=0)
-        self.sidebar.grid_rowconfigure(7, weight=1)
+        self.sidebar.grid_columnconfigure(0, weight=1)
+        self.sidebar.grid_rowconfigure(8, weight=1)  # 弹性空间行
 
         # Logo / 标题
         self.logo_label = ctk.CTkLabel(
@@ -262,74 +270,80 @@ class MainWindow(ctk.CTk):
             text="GLM-OCR",
             font=self._font(12, bold=True)
         )
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 2))
 
-        # 功能按钮
-        self.btn_screenshot = ctk.CTkButton(
+        # 副标题
+        self.logo_subtitle = ctk.CTkLabel(
             self.sidebar,
-            text=self.lang.get("screenshot_ocr"),
-            command=self.screenshot_ocr,
-            height=40
+            text="智能 OCR 识别工具",
+            font=self._font(-1),
+            text_color=("gray50", "gray60")
         )
-        self.btn_screenshot.grid(row=1, column=0, padx=20, pady=10)
+        self.logo_subtitle.grid(row=1, column=0, padx=20, pady=(0, 14))
 
-        self.btn_clipboard = ctk.CTkButton(
-            self.sidebar,
-            text=self.lang.get("clipboard_ocr"),
-            command=self.clipboard_ocr,
-            height=40
+        # 功能按钮（emoji + 全宽）
+        nav_items = [
+            ("btn_screenshot", "📷", self.lang.get("screenshot_ocr"), self.screenshot_ocr),
+            ("btn_clipboard",  "📋", self.lang.get("clipboard_ocr"),  self.clipboard_ocr),
+            ("btn_batch",      "📦", self.lang.get("batch_ocr"),       self.batch_ocr),
+            ("btn_folder",     "📁", self.lang.get("folder_ocr"),      self.folder_ocr),
+            ("btn_pdf_ocr",    "📄", self.lang.get("document_ocr"),    self.pdf_ocr),
+            ("btn_settings",   "⚙️", self.lang.get("settings"),        self.open_settings),
+        ]
+        for i, (attr, emoji, text, cmd) in enumerate(nav_items):
+            btn = ctk.CTkButton(
+                self.sidebar,
+                text=f"{emoji}  {text}",
+                command=cmd,
+                height=38,
+                anchor="w"
+            )
+            btn.grid(row=i + 2, column=0, padx=12, pady=4, sticky="ew")
+            setattr(self, attr, btn)
+
+        # 分隔线
+        self._sidebar_sep = ctk.CTkFrame(
+            self.sidebar, height=2,
+            fg_color=("gray80", "gray30")
         )
-        self.btn_clipboard.grid(row=2, column=0, padx=20, pady=10)
+        self._sidebar_sep.grid(row=9, column=0, padx=12, pady=(6, 4), sticky="ew")
 
-        self.btn_batch = ctk.CTkButton(
-            self.sidebar,
-            text=self.lang.get("batch_ocr"),
-            command=self.batch_ocr,
-            height=40
-        )
-        self.btn_batch.grid(row=3, column=0, padx=20, pady=10)
-
-        self.btn_folder = ctk.CTkButton(
-            self.sidebar,
-            text=self.lang.get("folder_ocr"),
-            command=self.folder_ocr,
-            height=40
-        )
-        self.btn_folder.grid(row=4, column=0, padx=20, pady=10)
-
-        self.btn_pdf_ocr = ctk.CTkButton(
-            self.sidebar,
-            text=self.lang.get("document_ocr"),
-            command=self.pdf_ocr,
-            height=40
-        )
-        self.btn_pdf_ocr.grid(row=5, column=0, padx=20, pady=10)
-
-        self.btn_settings = ctk.CTkButton(
-            self.sidebar,
-            text=self.lang.get("settings"),
-            command=self.open_settings,
-            height=40
-        )
-        self.btn_settings.grid(row=6, column=0, padx=20, pady=10)
-
-        # 模型状态
+        # 模型状态指示器
         self.model_status_label = ctk.CTkLabel(
             self.sidebar,
-            text=self.lang.get("model_not_loaded"),
-            text_color="red"
+            text=f"● {self.lang.get('model_not_loaded')}",
+            text_color="#e74c3c",
+            font=self._font(-1)
         )
-        self.model_status_label.grid(row=8, column=0, padx=20, pady=(10, 20))
+        self.model_status_label.grid(row=10, column=0, padx=12, pady=(6, 4))
 
         # 加载/卸载模型按钮
         self.btn_load_model = ctk.CTkButton(
             self.sidebar,
-            text=self.lang.get("load_model"),
+            text=f"▶  {self.lang.get('load_model')}",
             command=self.toggle_model,
-            fg_color="green",
-            height=40
+            fg_color="#2fa572",
+            hover_color="#27a065",
+            height=38,
+            anchor="w"
         )
-        self.btn_load_model.grid(row=9, column=0, padx=20, pady=(10, 20))
+        self.btn_load_model.grid(row=11, column=0, padx=12, pady=(4, 8), sticky="ew")
+
+        # 深色/浅色切换按钮
+        self._theme_is_dark = False
+        self.btn_theme = ctk.CTkButton(
+            self.sidebar,
+            text="🌙  深色模式",
+            command=self._toggle_theme,
+            height=32,
+            anchor="w",
+            fg_color="transparent",
+            text_color=("gray30", "gray70"),
+            hover_color=("gray85", "gray25"),
+            border_width=1,
+            border_color=("gray70", "gray40")
+        )
+        self.btn_theme.grid(row=12, column=0, padx=12, pady=(0, 16), sticky="ew")
 
     def create_main_content(self):
         """创建主内容区"""
@@ -345,14 +359,14 @@ class MainWindow(ctk.CTk):
         self.create_tabs()
 
     def create_control_bar(self):
-        """创建控制栏"""
-        self.control_frame = ctk.CTkFrame(self.main_frame, height=60)
-        self.control_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        """创建控制栏（双行布局：第0行识别类型，第1行Token设置）"""
+        self.control_frame = ctk.CTkFrame(self.main_frame)
+        self.control_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         self.control_frame.grid_columnconfigure(1, weight=1)
 
-        # 提示词类型选择
+        # --- Row 0: 识别类型 ---
         self.prompt_label = ctk.CTkLabel(self.control_frame, text=self.lang.get("recognition_type"))
-        self.prompt_label.grid(row=0, column=0, padx=(10, 5), pady=10)
+        self.prompt_label.grid(row=0, column=0, padx=(12, 5), pady=(10, 4))
 
         recognition_types = [
             self.lang.get("text_recognition"),
@@ -368,12 +382,11 @@ class MainWindow(ctk.CTk):
             command=self.on_prompt_change
         )
         self.prompt_type.set(recognition_types[0])  # 设置默认值
-        self.prompt_type.grid(row=0, column=1, padx=5, pady=10, sticky="w")
+        self.prompt_type.grid(row=0, column=1, padx=5, pady=(10, 4), sticky="w", columnspan=2)
 
-        # Token 调整控件
-        # Token 标签
+        # --- Row 1: Token 设置 ---
         self.token_label = ctk.CTkLabel(self.control_frame, text=self.lang.get("token_count"))
-        self.token_label.grid(row=0, column=2, padx=(20, 5), pady=10)
+        self.token_label.grid(row=1, column=0, padx=(12, 5), pady=(4, 10))
 
         # Token 滑块（范围按当前推理模式限制）
         perf_mode = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
@@ -385,7 +398,6 @@ class MainWindow(ctk.CTk):
             from_=mode_min,
             to=slider_max,
             number_of_steps=None,
-            width=200,
             command=self.on_token_change
         )
         # 初始值钳位到模式范围内
@@ -395,7 +407,7 @@ class MainWindow(ctk.CTk):
         self.current_tokens = get_effective_max_new_tokens(perf_mode, int(user_tokens), int(global_limit))
         self.config.set("model.max_new_tokens", self.current_tokens)
         self.token_slider.set(self.current_tokens)
-        self.token_slider.grid(row=0, column=3, padx=5, pady=10)
+        self.token_slider.grid(row=1, column=1, padx=5, pady=(4, 10), sticky="ew")
 
         # Token 数值显示/输入框
         self.token_value_var = ctk.StringVar(value=str(self.current_tokens))
@@ -405,7 +417,7 @@ class MainWindow(ctk.CTk):
             width=80,
             justify="center"
         )
-        self.token_entry.grid(row=0, column=4, padx=5, pady=10)
+        self.token_entry.grid(row=1, column=2, padx=(5, 12), pady=(4, 10))
         self.token_entry.bind("<Return>", self.on_token_entry_change)
         self.token_entry.bind("<FocusOut>", self.on_token_entry_change)
 
@@ -448,8 +460,8 @@ class MainWindow(ctk.CTk):
         self.image_label = ctk.CTkLabel(
             self.image_frame,
             text=self.lang.get("image_preview_hint"),
-            height=260,
-            fg_color="gray85"
+            height=250,
+            fg_color=("gray90", "gray20")
         )
         self.image_label.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
@@ -551,7 +563,8 @@ class MainWindow(ctk.CTk):
             self.batch_control_frame,
             text="开始批量识别",
             command=self.start_batch_ocr,
-            fg_color="green"
+            fg_color="#2fa572",
+            hover_color="#27a065"
         )
         self.btn_start_batch.grid(row=0, column=4, padx=5, pady=5)
 
@@ -568,7 +581,8 @@ class MainWindow(ctk.CTk):
             self.batch_control_frame,
             text="停止",
             command=self._stop_batch_ocr,
-            fg_color="red",
+            fg_color="#c0392b",
+            hover_color="#a93226",
             state="disabled"
         )
         self.btn_batch_stop.grid(row=0, column=6, padx=5, pady=5)
@@ -820,6 +834,25 @@ class MainWindow(ctk.CTk):
         self.bind("<Control-Shift-s>", lambda e: self.screenshot_ocr())
         self.bind("<Control-Shift-S>", lambda e: self.screenshot_ocr())
 
+    # ==================== 主题与状态辅助 ====================
+
+    def _set_model_status(self, text: str, state: str = "error"):
+        """统一更新模型状态标签（彩色圆点 + 文字）。
+        state: 'ok' | 'loading' | 'error'
+        """
+        color = {"ok": "#2fa572", "loading": "#f59e0b", "error": "#e74c3c"}.get(state, "#e74c3c")
+        self.model_status_label.configure(text=f"● {text}", text_color=color)
+
+    def _toggle_theme(self):
+        """切换深色/浅色模式"""
+        self._theme_is_dark = not self._theme_is_dark
+        if self._theme_is_dark:
+            ctk.set_appearance_mode("dark")
+            self.btn_theme.configure(text="☀️  浅色模式")
+        else:
+            ctk.set_appearance_mode("light")
+            self.btn_theme.configure(text="🌙  深色模式")
+
     # ==================== 加载动画 ====================
 
     def _start_loading_animation(self):
@@ -859,6 +892,33 @@ class MainWindow(ctk.CTk):
             text=self.lang.get("quick_recognition")
         )
         self.btn_select_image.configure(state="normal")
+
+    _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def _start_unload_animation(self):
+        """开始卸载模型动画（在侧边栏状态标签上轮播 spinner）"""
+        self._unloading = True
+        self._unload_anim_frame = 0
+        self._animate_unload()
+
+    def _animate_unload(self):
+        """更新卸载动画帧"""
+        if not self._unloading:
+            return
+        frame = self._SPINNER[self._unload_anim_frame % len(self._SPINNER)]
+        self._unload_anim_frame += 1
+        self.model_status_label.configure(
+            text=f"{frame} 模型卸载中...",
+            text_color="#f59e0b"
+        )
+        self._unload_anim_id = self.after(100, self._animate_unload)
+
+    def _stop_unload_animation(self):
+        """停止卸载动画"""
+        self._unloading = False
+        if self._unload_anim_id:
+            self.after_cancel(self._unload_anim_id)
+            self._unload_anim_id = None
 
     # ==================== 窗口和托盘方法 ====================
 
@@ -1036,8 +1096,8 @@ class MainWindow(ctk.CTk):
                 self._api_poll_errors = 0
                 self.ocr_service = None
                 self.model_loaded = False
-                self.model_status_label.configure(text="请加载本地模型", text_color="red")
-                self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                self._set_model_status("请加载本地模型", "error")
+                self.btn_load_model.configure(text="▶  加载模型", fg_color="#2fa572", hover_color="#27a065", state="normal")
                 self.log("API 已关闭，请手动加载本地模型")
         else:
             self.log("API 服务器未在运行")
@@ -1076,12 +1136,12 @@ class MainWindow(ctk.CTk):
             # 检查远程服务状态
             if self.ocr_service.is_loaded():
                 self.model_loaded = True
-                self.model_status_label.configure(text="远程模型已连接", text_color="green")
-                self.btn_load_model.configure(text="断开连接", fg_color="red")
+                self._set_model_status("远程模型已连接", "ok")
+                self.btn_load_model.configure(text="■  断开连接", fg_color="#c0392b", hover_color="#a93226")
             else:
                 self.model_loaded = False
-                self.model_status_label.configure(text="远程服务未就绪", text_color="red")
-                self.btn_load_model.configure(text="重新连接", fg_color="green")
+                self._set_model_status("远程服务未就绪", "error")
+                self.btn_load_model.configure(text="▶  重新连接", fg_color="#2fa572", hover_color="#27a065")
         else:
             # 本地模式
             if self.ocr_engine and self.ocr_engine.is_loaded():
@@ -1102,7 +1162,7 @@ class MainWindow(ctk.CTk):
         self.ocr_service = RemoteOCRService(base_url, timeout=timeout)
 
         # 更新 UI 状态
-        self.model_status_label.configure(text="API 模型加载中...", text_color="orange")
+        self._set_model_status("API 模型加载中...", "loading")
         self.btn_load_model.configure(state="disabled", text="加载中...")
         self.log(f"已连接本地 API 服务 ({base_url})，等待模型加载...")
 
@@ -1121,8 +1181,8 @@ class MainWindow(ctk.CTk):
             self._using_local_api = False
             self.ocr_service = None
             self.model_loaded = False
-            self.model_status_label.configure(text="API 服务已断开", text_color="red")
-            self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+            self._set_model_status("API 服务已断开", "error")
+            self.btn_load_model.configure(text="▶  加载模型", fg_color="#2fa572", hover_color="#27a065", state="normal")
             self.log("⚠ API 服务已断开，请手动加载本地模型")
             return
 
@@ -1131,8 +1191,8 @@ class MainWindow(ctk.CTk):
             if loaded:
                 self.model_loaded = True
                 self._api_poll_errors = 0
-                self.model_status_label.configure(text="API 模型已加载", text_color="green")
-                self.btn_load_model.configure(text="卸载模型", fg_color="red", state="normal")
+                self._set_model_status("API 模型已加载", "ok")
+                self.btn_load_model.configure(text="■  卸载模型", fg_color="#c0392b", hover_color="#a93226", state="normal")
                 self.log("✓ API 模型已加载就绪")
                 self._api_poll_id = None
                 return
@@ -1143,8 +1203,8 @@ class MainWindow(ctk.CTk):
             # 连续失败超过 15 次（约 30 秒）则停止轮询
             if self._api_poll_errors >= 15:
                 self._api_poll_id = None
-                self.model_status_label.configure(text="API 无响应", text_color="red")
-                self.btn_load_model.configure(text="重试", fg_color="green", state="normal")
+                self._set_model_status("API 无响应", "error")
+                self.btn_load_model.configure(text="▶  重试", fg_color="#2fa572", hover_color="#27a065", state="normal")
                 self.log("⚠ API 持续无响应，已停止轮询。可点击按钮重试")
                 return
 
@@ -1155,8 +1215,7 @@ class MainWindow(ctk.CTk):
         """通过本地 API 触发模型加载，在后台线程中执行。"""
         def load_thread():
             self.after(0, lambda: self.btn_load_model.configure(state="disabled", text="加载中..."))
-            self.after(0, lambda: self.model_status_label.configure(
-                text="API 模型加载中...", text_color="orange"))
+            self.after(0, lambda: self._set_model_status("API 模型加载中...", "loading"))
             self.log("正在通过 API 加载模型...")
 
             try:
@@ -1170,22 +1229,22 @@ class MainWindow(ctk.CTk):
                 if data.get("success"):
                     def on_success():
                         self.model_loaded = True
-                        self.model_status_label.configure(text="API 模型已加载", text_color="green")
-                        self.btn_load_model.configure(text="卸载模型", fg_color="red", state="normal")
+                        self._set_model_status("API 模型已加载", "ok")
+                        self.btn_load_model.configure(text="■  卸载模型", fg_color="#c0392b", hover_color="#a93226", state="normal")
                         self.log("✓ API 模型加载成功")
                     self.after(0, on_success)
                 else:
                     msg = data.get("detail", "未知错误")
                     def on_fail():
-                        self.model_status_label.configure(text="API 模型加载失败", text_color="red")
-                        self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                        self._set_model_status("API 模型加载失败", "error")
+                        self.btn_load_model.configure(text="▶  加载模型", fg_color="#2fa572", hover_color="#27a065", state="normal")
                         self.log(f"✗ API 模型加载失败: {msg}")
                     self.after(0, on_fail)
             except (httpx.HTTPError, OSError) as e:
                 err = str(e)
                 def on_error():
-                    self.model_status_label.configure(text="API 模型加载失败", text_color="red")
-                    self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                    self._set_model_status("API 模型加载失败", "error")
+                    self.btn_load_model.configure(text="▶  加载模型", fg_color="#2fa572", hover_color="#27a065", state="normal")
                     self.log(f"✗ API 模型加载异常: {err}")
                 self.after(0, on_error)
 
@@ -1203,8 +1262,8 @@ class MainWindow(ctk.CTk):
 
             if data.get("success"):
                 self.model_loaded = False
-                self.model_status_label.configure(text="API 模型未加载", text_color="red")
-                self.btn_load_model.configure(text="加载模型", fg_color="green")
+                self._set_model_status("API 模型未加载", "error")
+                self.btn_load_model.configure(text="▶  加载模型", fg_color="#2fa572", hover_color="#27a065")
                 self.log("✓ API 模型已卸载")
             else:
                 self.log(f"✗ API 模型卸载失败: {data.get('detail', '未知错误')}")
@@ -1281,13 +1340,13 @@ class MainWindow(ctk.CTk):
                 def on_done():
                     if success:
                         self.model_loaded = True
-                        self.model_status_label.configure(text="模型已加载", text_color="green")
-                        self.btn_load_model.configure(text="卸载模型", fg_color="red", state="normal")
+                        self._set_model_status("模型已加载", "ok")
+                        self.btn_load_model.configure(text="■  卸载模型", fg_color="#c0392b", hover_color="#a93226", state="normal")
                         self.log("✓ 模型加载成功")
                         self.ocr_service = LocalOCRService(self.ocr_engine)
                     else:
-                        self.model_status_label.configure(text="加载失败", text_color="red")
-                        self.btn_load_model.configure(text="加载模型", fg_color="green", state="normal")
+                        self._set_model_status("加载失败", "error")
+                        self.btn_load_model.configure(text="▶  加载模型", fg_color="#2fa572", hover_color="#27a065", state="normal")
                         self.log("✗ 模型加载失败")
 
                 self.after(0, on_done)
@@ -1307,19 +1366,35 @@ class MainWindow(ctk.CTk):
         if self.config.get("api.mode") == "remote":
             self.ocr_service = None
             self.model_loaded = False
-            self.model_status_label.configure(text="远程服务未连接", text_color="red")
-            self.btn_load_model.configure(text="重新连接", fg_color="green")
+            self._set_model_status("远程服务未连接", "error")
+            self.btn_load_model.configure(text="▶  重新连接", fg_color="#2fa572", hover_color="#27a065")
             self.log("已断开远程服务")
             return
 
-        # 本地模式：卸载模型
-        if self.ocr_engine:
-            self.ocr_engine.unload_model()
+        # 本地模式：在后台线程卸载，避免 del model + gc.collect() 阻塞主线程
+        engine = self.ocr_engine
         self.ocr_service = None
+        self.ocr_engine = None
         self.model_loaded = False
-        self.model_status_label.configure(text="模型未加载", text_color="red")
-        self.btn_load_model.configure(text="加载模型", fg_color="green")
-        self.log("模型已卸载")
+        self.btn_load_model.configure(state="disabled", text="卸载中...")
+        self._start_unload_animation()
+
+        def do_unload():
+            if engine:
+                engine.unload_model()
+            def on_done():
+                self._stop_unload_animation()
+                self._set_model_status("模型未加载", "error")
+                self.btn_load_model.configure(
+                    text="▶  加载模型",
+                    fg_color="#2fa572",
+                    hover_color="#27a065",
+                    state="normal"
+                )
+                self.log("模型已卸载")
+            self.after(0, on_done)
+
+        threading.Thread(target=do_unload, daemon=True).start()
 
     def screenshot_ocr(self):
         """启动截图工具进行屏幕截图，截图完成后自动进行 OCR 识别。"""
