@@ -16,6 +16,7 @@ from core.OCREngine import (
     get_smart_performance_params,
     get_effective_max_new_tokens,
     get_token_limits_for_performance_mode,
+    normalize_performance_mode,
 )
 from services.local_service import LocalOCRService
 from services.remote_service import RemoteOCRService
@@ -375,7 +376,7 @@ class MainWindow(ctk.CTk):
         self.token_label.grid(row=0, column=2, padx=(20, 5), pady=10)
 
         # Token 滑块（范围按当前推理模式限制）
-        perf_mode = self.config.get("model.performance_mode", "accurate_save")
+        perf_mode = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
         mode_min, mode_max = get_token_limits_for_performance_mode(perf_mode)
         global_limit = self.config.get("model.max_new_tokens_limit", 8192)
         slider_max = min(mode_max, global_limit)
@@ -1250,7 +1251,9 @@ class MainWindow(ctk.CTk):
                 perf_mode = self.config.get("model.performance_mode")
                 if perf_mode is None:
                     q = self.config.get("model.quantization", "none")
-                    perf_mode = {"4bit": "fast_save", "8bit": "accurate_save"}.get(q, "accurate_save")
+                    perf_mode = {"4bit": "memory_save", "8bit": "balanced"}.get(q, "balanced")
+                else:
+                    perf_mode = normalize_performance_mode(perf_mode)  # 兼容旧版模式名
                 quantization, max_image_long_edge = get_smart_performance_params(perf_mode)
                 dtype = self.config.get("model.dtype", "float16")
                 if self.config.get("model.use_local_only"):
@@ -2166,7 +2169,7 @@ class MainWindow(ctk.CTk):
 
     def _get_effective_max_new_tokens(self) -> int:
         """按当前推理模式钳位后的 token 数（模式优先于用户设置）。"""
-        perf_mode = self.config.get("model.performance_mode", "accurate_save")
+        perf_mode = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
         user_val = self.config.get("model.max_new_tokens", self.current_tokens)
         if isinstance(user_val, float):
             user_val = int(user_val)
@@ -2177,7 +2180,7 @@ class MainWindow(ctk.CTk):
         """推理模式变更后刷新 Token 滑块范围与当前值（按新模式钳位）。"""
         if not hasattr(self, "token_slider") or self.token_slider is None:
             return
-        perf_mode = self.config.get("model.performance_mode", "accurate_save")
+        perf_mode = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
         mode_min, mode_max = get_token_limits_for_performance_mode(perf_mode)
         global_limit = self.config.get("model.max_new_tokens_limit", 8192)
         slider_max = min(mode_max, global_limit)
@@ -2223,7 +2226,7 @@ class MainWindow(ctk.CTk):
             token_value = int(input_value)
 
             # 按推理模式限制范围（模式优先于用户设置）
-            perf_mode = self.config.get("model.performance_mode", "accurate_save")
+            perf_mode = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
             mode_min, mode_max = get_token_limits_for_performance_mode(perf_mode)
             global_limit = self.config.get("model.max_new_tokens_limit", 8192)
             min_tokens = mode_min
@@ -2426,14 +2429,14 @@ class MainWindow(ctk.CTk):
         )
 
         # ========== 推理模式设置 ==========
-        perf_mode_keys = ["accurate_fast", "accurate_save", "fast_save"]
+        perf_mode_keys = ["high_quality", "balanced", "memory_save"]
         perf_mode_displays = [
-            self.lang.get("performance_mode_accurate_fast"),
-            self.lang.get("performance_mode_accurate_save"),
-            self.lang.get("performance_mode_fast_save"),
+            self.lang.get("performance_mode_high_quality"),
+            self.lang.get("performance_mode_balanced"),
+            self.lang.get("performance_mode_memory_save"),
         ]
-        current_perf = self.config.get("model.performance_mode", "accurate_save")
-        current_perf_index = perf_mode_keys.index(current_perf) if current_perf in perf_mode_keys else 0
+        current_perf = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
+        current_perf_index = perf_mode_keys.index(current_perf) if current_perf in perf_mode_keys else 1
 
         ctk.CTkLabel(settings_win, text=self.lang.get("performance_mode_label"), font=("Microsoft YaHei UI", 14)).grid(
             row=6, column=0, padx=(40, 10), pady=12, sticky="w"

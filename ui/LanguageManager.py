@@ -485,38 +485,38 @@ class LanguageManager:
             "it": "Modalità inferenza:",
             "ru": "Режим вывода:"
         },
-        "performance_mode_accurate_fast": {
-            "zh_CN": "高显存·快速·高精度",
-            "zh_HK": "高顯存·快速·高精度",
-            "zh_TW": "高顯存·快速·高精度",
-            "en": "High VRAM · Fast · Accurate",
-            "fr": "VRAM élevée · Rapide · Précise",
-            "de": "Hoher VRAM · Schnell · Genau",
-            "ja": "高VRAM·高速·高精度",
-            "it": "Alto VRAM · Veloce · Accurato",
-            "ru": "Больше VRAM · Быстро · Точно"
+        "performance_mode_high_quality": {
+            "zh_CN": "高质量·无量化 (≥14GB)",
+            "zh_HK": "高質量·無量化 (≥14GB)",
+            "zh_TW": "高質量·無量化 (≥14GB)",
+            "en": "High Quality · No Quant (≥14GB)",
+            "fr": "Haute qualité · Sans quant. (≥14GB)",
+            "de": "Hohe Qualität · Keine Quant. (≥14GB)",
+            "ja": "高品質·量化なし (≥14GB)",
+            "it": "Alta qualità · No quant. (≥14GB)",
+            "ru": "Высокое кач. · Без квант. (≥14GB)"
         },
-        "performance_mode_accurate_save": {
-            "zh_CN": "低显存·省资源·高精度",
-            "zh_HK": "低顯存·省資源·高精度",
-            "zh_TW": "低顯存·省資源·高精度",
-            "en": "Low VRAM · Save Resources · Accurate",
-            "fr": "VRAM faible · Économiser · Précise",
-            "de": "Wenig VRAM · Ressourcenschonend · Genau",
-            "ja": "低VRAM·省リソース·高精度",
-            "it": "Basso VRAM · Risparmio · Accurato",
-            "ru": "Меньше VRAM · Экономия · Точно"
+        "performance_mode_balanced": {
+            "zh_CN": "推荐·8bit量化 (7-14GB)",
+            "zh_HK": "推薦·8bit量化 (7-14GB)",
+            "zh_TW": "推薦·8bit量化 (7-14GB)",
+            "en": "Balanced · 8bit Quant (7-14GB)",
+            "fr": "Équilibré · Quant. 8bit (7-14GB)",
+            "de": "Ausgewogen · 8bit Quant. (7-14GB)",
+            "ja": "推奨·8bit量化 (7-14GB)",
+            "it": "Bilanciato · Quant. 8bit (7-14GB)",
+            "ru": "Баланс · 8bit квант. (7-14GB)"
         },
-        "performance_mode_fast_save": {
-            "zh_CN": "低显存·快速·一般精度",
-            "zh_HK": "低顯存·快速·一般精度",
-            "zh_TW": "低顯存·快速·一般精度",
-            "en": "Low VRAM · Fast · Lower Accuracy",
-            "fr": "VRAM faible · Rapide · Précision moindre",
-            "de": "Wenig VRAM · Schnell · Geringere Genauigkeit",
-            "ja": "低VRAM·高速·やや精度低下",
-            "it": "Basso VRAM · Veloce · Precisione minore",
-            "ru": "Меньше VRAM · Быстро · Ниже точность"
+        "performance_mode_memory_save": {
+            "zh_CN": "省显存·4bit量化 (<7GB)",
+            "zh_HK": "省顯存·4bit量化 (<7GB)",
+            "zh_TW": "省顯存·4bit量化 (<7GB)",
+            "en": "Low VRAM · 4bit Quant (<7GB)",
+            "fr": "VRAM faible · Quant. 4bit (<7GB)",
+            "de": "Wenig VRAM · 4bit Quant. (<7GB)",
+            "ja": "省VRAM·4bit量化 (<7GB)",
+            "it": "Basso VRAM · Quant. 4bit (<7GB)",
+            "ru": "Меньше VRAM · 4bit квант. (<7GB)"
         },
         "performance_mode_reload_hint": {
             "zh_CN": "切换后需重新加载模型生效",
@@ -530,15 +530,15 @@ class LanguageManager:
             "ru": "Перезагрузите модель для применения"
         },
         "performance_mode_token_hint": {
-            "zh_CN": "Token 按模式限制：高显存 4096～8192，省显存·高精度 2048～4096，快速省显存 1024～2048",
-            "zh_HK": "Token 依模式限制：高顯存 4096～8192，省顯存·高精度 2048～4096，快速省顯存 1024～2048",
-            "zh_TW": "Token 依模式限制：高顯存 4096～8192，省顯存·高精度 2048～4096，快速省顯存 1024～2048",
-            "en": "Token by mode: High VRAM 4096–8192, Save+Accurate 2048–4096, Fast Save 1024–2048",
-            "fr": "Token par mode : High VRAM 4096–8192, Écon+Précise 2048–4096, Rapide 1024–2048",
-            "de": "Token nach Modus: High VRAM 4096–8192, Sparsam+Genau 2048–4096, Schnell 1024–2048",
-            "ja": "Tokenはモードで制限：高VRAM 4096～8192、省・高精度 2048～4096、高速省 1024～2048",
-            "it": "Token per modo: High VRAM 4096–8192, Risparmio+Accurato 2048–4096, Veloce 1024–2048",
-            "ru": "Token по режиму: High VRAM 4096–8192, Эконом+Точно 2048–4096, Быстро 1024–2048"
+            "zh_CN": "Token 上限按模式限制：高质量 ≤8192，推荐 ≤4096，省显存 ≤2048；下限均为 512",
+            "zh_HK": "Token 上限依模式限制：高質量 ≤8192，推薦 ≤4096，省顯存 ≤2048；下限均為 512",
+            "zh_TW": "Token 上限依模式限制：高質量 ≤8192，推薦 ≤4096，省顯存 ≤2048；下限均為 512",
+            "en": "Token cap by mode: High Quality ≤8192, Balanced ≤4096, Low VRAM ≤2048; min 512",
+            "fr": "Plafond token : Haute qualité ≤8192, Équilibré ≤4096, VRAM faible ≤2048; min 512",
+            "de": "Token-Limit nach Modus: Hoch ≤8192, Ausgewogen ≤4096, Wenig VRAM ≤2048; min 512",
+            "ja": "Tokenのモード上限：高品質 ≤8192、推奨 ≤4096、省VRAM ≤2048；下限は512",
+            "it": "Limite token: Alta qualità ≤8192, Bilanciato ≤4096, Basso VRAM ≤2048; min 512",
+            "ru": "Лимит токенов: Высокое кач. ≤8192, Баланс ≤4096, Меньше VRAM ≤2048; мин 512"
         },
         "max_token_limit": {
             "zh_CN": "最大 Token 限制:",

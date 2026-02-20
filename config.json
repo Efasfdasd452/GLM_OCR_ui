@@ -8,7 +8,7 @@
     "max_new_tokens_limit": 8192,
     "use_local_only": true,
     "quantization": "8bit",
-    "performance_mode": "accurate_fast"
+    "performance_mode": "balanced"
   },
   "ocr": {
     "language": "简体中文",

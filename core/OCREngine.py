@@ -12,27 +12,40 @@ from PIL import Image
 from transformers import AutoProcessor, AutoModelForImageTextToText
 
 
-# 三种推理模式对应的 token 范围（min, max）。模式优先于用户设置：实际使用时会在此范围内钳位。
-# 保证长文/高显存模式有足够 token，省显存模式限制上限避免 OOM。
+# 旧版推理模式名称 → 新版迁移表（兼容已保存的旧配置文件）
+_MODE_MIGRATION = {
+    "accurate_fast": "high_quality",
+    "accurate_save": "balanced",
+    "fast_save":     "memory_save",
+}
+
+
+def normalize_performance_mode(mode: str) -> str:
+    """将旧版推理模式名迁移到当前版本，未知名称原样返回。"""
+    return _MODE_MIGRATION.get(mode, mode)
+
+
+# 三种推理模式对应的 token 上限（max）。下限统一为 512，不再强制最低值。
+# 上限由模式决定，防止省显存模式因 token 过高导致 OOM。
 PERFORMANCE_MODE_TOKEN_LIMITS = {
-    "accurate_fast": (4096, 8192),   # 高显存：至少 4096，上限 8192
-    "accurate_save": (2048, 4096),    # 平衡：2048～4096
-    "fast_save": (1024, 2048),        # 省显存：上限 2048
+    "high_quality": (512, 8192),  # 高质量：无量化，token 上限 8192
+    "balanced":     (512, 4096),  # 推荐：8bit 量化，token 上限 4096
+    "memory_save":  (512, 2048),  # 省显存：4bit 量化，token 上限 2048
 }
 
 
 def get_token_limits_for_performance_mode(mode: str) -> tuple:
     """
     返回当前推理模式允许的 token 范围 (min_tokens, max_tokens)。
-    用于界面滑块范围与有效 token 计算。
+    用于界面滑块范围与有效 token 计算。自动迁移旧版模式名。
     """
-    return PERFORMANCE_MODE_TOKEN_LIMITS.get(mode, (2048, 4096))
+    return PERFORMANCE_MODE_TOKEN_LIMITS.get(normalize_performance_mode(mode), (512, 4096))
 
 
 def get_effective_max_new_tokens(performance_mode: str, user_value: int, global_limit: int) -> int:
     """
-    按推理模式钳位用户设置的 token 数：模式优先于用户设置。
-    例如选择「准确快速」时最低 4096，即使用户填 2048 也会按 4096 使用。
+    按推理模式上限钳位用户设置的 token 数。
+    只限制上限（避免 OOM），不再强制最低值，用户可自由设低。
     """
     min_t, max_t = get_token_limits_for_performance_mode(performance_mode)
     cap = min(max_t, global_limit)
@@ -42,33 +55,32 @@ def get_effective_max_new_tokens(performance_mode: str, user_value: int, global_
 def get_performance_mode_params(mode: str) -> tuple:
     """
     根据性能模式返回 (quantization, max_image_long_edge)。
+    未知模式回退到 balanced（8bit, 4096）。
 
     三种推理模式的具体区别：
 
-    - accurate_fast（准确快速）
-      量化: 无量化(none)，显存充足时可为 8bit/4bit（见 get_smart_performance_params）
+    - high_quality（高质量）
+      量化: 无量化(none)；显存不足时由 get_smart_performance_params 自动降级
       长边: 4096
-      适用: 显存充足(建议≥16G)、长文档/大图、追求最高识别质量与速度
-      Token: 最低 4096，推荐 4096～8192
+      适用: 显存 ≥14GB，长文档/大图，追求最高识别质量
 
-    - accurate_save（准确省显存）
+    - balanced（推荐）
       量化: 8bit
       长边: 4096
-      适用: 显存有限、仍要高质量与长图支持，可接受较慢推理
-      Token: 2048～4096
+      适用: 显存 7-14GB，质量与资源占用的最佳平衡
 
-    - fast_save（快速省显存）
+    - memory_save（省显存）
       量化: 4bit
-      长边: 2048（大图会缩小，识别可能略差）
-      适用: 显存紧张、短文/小图、优先速度与占用
-      Token: 1024～2048，上限 2048 避免 OOM
+      长边: 2048（大图缩小，识别可能略差）
+      适用: 显存 <7GB，优先保证能跑起来
     """
+    mode = normalize_performance_mode(mode)
     modes = {
-        "accurate_fast": ("none", 4096),
-        "accurate_save": ("8bit", 4096),
-        "fast_save": ("4bit", 2048),
+        "high_quality": ("none", 4096),
+        "balanced":     ("8bit", 4096),
+        "memory_save":  ("4bit", 2048),
     }
-    return modes.get(mode, ("none", 4096))
+    return modes.get(mode, ("8bit", 4096))
 
 
 def get_recommended_batch_concurrency() -> int:
@@ -97,10 +109,11 @@ def get_recommended_batch_concurrency() -> int:
 def get_smart_performance_params(mode: str) -> tuple:
     """
     根据性能模式与当前显卡显存返回 (quantization, max_image_long_edge)。
-    仅对 accurate_fast 做智能调整，其余模式与 get_performance_mode_params 一致。
-    用于避免高显存模式下显存不足导致 OOM。
+    仅对 high_quality 做智能降级，其余模式直接返回固定参数。
+    用于避免 high_quality 在显存不足时 OOM。
     """
-    if mode != "accurate_fast":
+    mode = normalize_performance_mode(mode)
+    if mode != "high_quality":
         return get_performance_mode_params(mode)
     if not torch.cuda.is_available():
         return "8bit", 4096
@@ -114,11 +127,12 @@ def get_smart_performance_params(mode: str) -> tuple:
         elif total_gb >= 12:
             q, edge = "8bit", 4096
         elif total_gb >= 7.0:
-            # 7G～8G（含多数 8G 卡若系统少报）用 8bit，避免误判为 4bit
-            q, edge = "8bit", 2048
+            # 7-8GB：降级量化但保留 4096 长边，维持图片质量
+            q, edge = "8bit", 4096
         else:
-            q, edge = "4bit", 2048
-        print(f"[推理模式] 显存 {total_gb:.1f} GB，accurate_fast 实际使用: {q} 量化, 长边 {edge}")
+            # 严重不足：量化 + 缩图双管齐下
+            q, edge = "8bit", 2048
+        print(f"[推理模式] 显存 {total_gb:.1f} GB，high_quality 实际使用: {q} 量化, 长边 {edge}")
         return q, edge
     except Exception:
         return "8bit", 4096

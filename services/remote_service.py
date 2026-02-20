@@ -26,8 +26,26 @@ def _image_to_base64_sync(image) -> Optional[str]:
     return None
 
 
+def _estimate_image_mb(image) -> float:
+    """估算图片的原始数据量（MB），用于自适应超时计算。
+    文件路径取磁盘大小；PIL Image 按像素数估算。"""
+    try:
+        if isinstance(image, (str, Path)):
+            return Path(str(image)).stat().st_size / (1024 * 1024)
+        if isinstance(image, Image.Image):
+            # 每像素按 3 字节（RGB）估算未压缩大小
+            return image.width * image.height * 3 / (1024 * 1024)
+    except Exception:
+        pass
+    return 0.0
+
+
 class RemoteOCRService(OCRService):
     """远程 OCR 服务（通过 HTTP API 调用）"""
+
+    # 自适应超时参数：每 MB 增加的秒数 / 最大超时上限
+    _TIMEOUT_PER_MB = 20
+    _TIMEOUT_MAX = 300
 
     def __init__(self, base_url: str, timeout: int = 60):
         """
@@ -35,11 +53,21 @@ class RemoteOCRService(OCRService):
 
         Args:
             base_url: 远程 API 基础 URL（如 http://192.168.1.100:8000）
-            timeout: 请求超时时间（秒）
+            timeout: 基础超时时间（秒），小图保底值
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self._client = None
+
+    def _adaptive_timeout(self, image) -> float:
+        """根据图片大小计算自适应超时时间。
+        小图使用基础超时，大图按比例延长，防止推理时间过长导致误判超时。
+
+        公式：max(base, 60 + size_mb * 20)，上限 300 秒。
+        """
+        size_mb = _estimate_image_mb(image)
+        adaptive = 60.0 + size_mb * self._TIMEOUT_PER_MB
+        return min(self._TIMEOUT_MAX, max(float(self.timeout), adaptive))
 
     def recognize_image(
         self,
@@ -63,14 +91,19 @@ class RemoteOCRService(OCRService):
             if not image_b64:
                 print("不支持的图片类型")
                 return None
+            timeout = self._adaptive_timeout(image)
             response = self.client.post(
                 f"{self.base_url}/api/recognize",
                 json={
                     "image_base64": image_b64,
                     "prompt": prompt,
                     "max_new_tokens": max_new_tokens
-                }
+                },
+                timeout=timeout  # per-request 覆盖，大图自动延长
             )
+            if response.status_code == 413:
+                print(f"图片过大，服务端拒绝（413）")
+                return None
             response.raise_for_status()
             data = response.json()
             if data.get("success"):
@@ -78,7 +111,7 @@ class RemoteOCRService(OCRService):
             print(f"远程识别失败: {data.get('error', '未知错误')}")
             return None
         except httpx.TimeoutException:
-            print(f"远程请求超时（{self.timeout}秒）")
+            print(f"远程请求超时（{timeout:.0f}秒）")
             return None
         except httpx.HTTPStatusError as e:
             print(f"远程 API 错误: {e.response.status_code} - {e.response.text}")
@@ -150,7 +183,6 @@ class RemoteOCRService(OCRService):
         next_index = 0
         in_flight = {}  # future -> idx
         base_url = self.base_url.rstrip("/")
-        timeout = self.timeout
 
         def recognize_one(idx: int, img) -> tuple:
             """单张识别（在线程池中执行，每个线程自建 httpx 客户端）。"""
@@ -162,7 +194,7 @@ class RemoteOCRService(OCRService):
                         "text": "不支持的图片类型",
                         "success": False,
                     }
-                with httpx.Client(timeout=timeout) as client:
+                with httpx.Client(timeout=self._adaptive_timeout(img)) as client:
                     resp = client.post(
                         f"{base_url}/api/recognize",
                         json={

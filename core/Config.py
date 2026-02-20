@@ -22,7 +22,7 @@ class Config:
     "max_new_tokens_limit": 8192,
     "use_local_only": True,
     "quantization": "none",
-    "performance_mode": "accurate_save"
+    "performance_mode": "balanced"
   },
   "ocr": {
     "language": "简体中文",

@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 from core.Config import Config
-from core.OCREngine import OCREngine, get_smart_performance_params, get_recommended_batch_concurrency
+from core.OCREngine import OCREngine, get_smart_performance_params, get_recommended_batch_concurrency, normalize_performance_mode
 
 
 class ModelManager:
@@ -46,7 +46,9 @@ class ModelManager:
                 perf_mode = config.get("model.performance_mode")
                 if perf_mode is None:
                     q = config.get("model.quantization", "none")
-                    perf_mode = {"4bit": "fast_save", "8bit": "accurate_save"}.get(q, "accurate_save")
+                    perf_mode = {"4bit": "memory_save", "8bit": "balanced"}.get(q, "balanced")
+                else:
+                    perf_mode = normalize_performance_mode(perf_mode)  # 兼容旧版模式名
                 quantization, max_image_long_edge = get_smart_performance_params(perf_mode)
                 dtype = config.get("model.dtype", "float16")
 
