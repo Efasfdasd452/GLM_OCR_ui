@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 from core.Config import Config
-from core.OCREngine import OCREngine
+from core.OCREngine import OCREngine, get_smart_performance_params, get_recommended_batch_concurrency
 
 
 class ModelManager:
@@ -42,8 +42,12 @@ class ModelManager:
             self.config = config
 
             try:
-                # 从配置读取参数
-                quantization = config.get("model.quantization", "none")
+                # 从配置读取参数（优先使用 performance_mode 预设；旧配置无此键时按 quantization 推断）
+                perf_mode = config.get("model.performance_mode")
+                if perf_mode is None:
+                    q = config.get("model.quantization", "none")
+                    perf_mode = {"4bit": "fast_save", "8bit": "accurate_save"}.get(q, "accurate_save")
+                quantization, max_image_long_edge = get_smart_performance_params(perf_mode)
                 dtype = config.get("model.dtype", "float16")
 
                 if config.get("model.use_local_only"):
@@ -52,14 +56,16 @@ class ModelManager:
                         device=config.get("model.device"),
                         use_local_only=config.get("model.use_local_only"),
                         quantization=quantization,
-                        dtype=dtype
+                        dtype=dtype,
+                        max_image_long_edge=max_image_long_edge
                     )
                 else:
                     self.engine = OCREngine(
                         model_path=config.get("model.name"),
                         device=config.get("model.device"),
                         quantization=quantization,
-                        dtype=dtype
+                        dtype=dtype,
+                        max_image_long_edge=max_image_long_edge
                     )
 
                 # 加载模型
@@ -100,7 +106,7 @@ class ModelManager:
         return time.time() - self.start_time
 
     def get_model_info(self) -> dict:
-        """获取模型信息"""
+        """获取模型信息（含推荐批量并发数，供远程客户端并发请求参考）"""
         if not self.is_loaded() or not self.engine:
             return {}
 
@@ -110,6 +116,7 @@ class ModelManager:
                 "quantization": self.config.get("model.quantization", "none"),
                 "max_new_tokens_limit": self.config.get("model.max_new_tokens_limit", 8192)
             })
+        info["recommended_batch_concurrency"] = get_recommended_batch_concurrency()
         return info
 
 

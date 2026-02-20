@@ -21,7 +21,8 @@ class Config:
     "max_new_tokens": 2048,
     "max_new_tokens_limit": 8192,
     "use_local_only": True,
-    "quantization": "none"
+    "quantization": "none",
+    "performance_mode": "accurate_save"
   },
   "ocr": {
     "language": "简体中文",
@@ -33,7 +34,8 @@ class Config:
     "recursive": False,
     "output_dir": "./output",
     "filename_format": "[OCR]_{name}_{date}",
-    "date_format": "%Y%m%d_%H%M%S"
+    "date_format": "%Y%m%d_%H%M%S",
+    "save_mode": "single_md"
   },
   "ui": {
     "theme": "light",
@@ -55,6 +57,7 @@ class Config:
     "remote_url": "http://127.0.0.1:8000",
     "remote_host": "127.0.0.1",
     "remote_port": 8000,
+    "remote_timeout": 60,
     "auto_load_model": True,
     "max_image_size_mb": 10
   },
@@ -143,7 +146,7 @@ class Config:
     """
 
 
-    _save_lock = threading.Lock()
+    _save_lock = threading.RLock()  # RLock 允许同一线程重入，避免 get/set 嵌套调用死锁
 
     def __init__(self, config_path: str = None, base_dir: Path = None):
         """初始化配置
@@ -192,8 +195,12 @@ class Config:
 
         if self.config["model"]["local_path"]:
             local_path = Path(self.config["model"]["local_path"])
+            # 相对路径相对于 base_dir 解析，而非 CWD（打包后 CWD 不确定）
+            if not local_path.is_absolute():
+                local_path = (self.base_dir / local_path).resolve()
             if local_path.exists():
                 print(f"✓ 使用配置的本地模型: {local_path}")
+                self.config["model"]["local_path"] = str(local_path)
                 return
 
         # 检测模型目录
@@ -211,10 +218,14 @@ class Config:
         print("未检测到本地模型，将从 HuggingFace 下载")
 
     def get_model_path(self) -> str:
-        """获取模型路径（优先返回本地路径）"""
+        """获取模型路径（优先返回本地路径，相对路径相对于 base_dir 解析）"""
         local_path = self.config["model"].get("local_path")
-        if local_path and Path(local_path).exists():
-            return str(Path(local_path).absolute())
+        if local_path:
+            p = Path(local_path)
+            if not p.is_absolute():
+                p = (self.base_dir / p).resolve()
+            if p.exists():
+                return str(p)
         return self.config["model"]["name"]
 
     def load_config(self) -> Dict[str, Any]:
@@ -281,7 +292,7 @@ class Config:
         return default
 
     def get(self, key_path: str, default=None):
-        """获取配置值，支持点分路径
+        """获取配置值，支持点分路径（线程安全）
 
         Args:
             key_path: 配置键路径，如 "model.device"
@@ -290,14 +301,15 @@ class Config:
         Returns:
             配置值，不存在则返回 default
         """
-        keys = key_path.split('.')
-        value = self.config
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
-            else:
-                return default
-        return value
+        with self._save_lock:
+            keys = key_path.split('.')
+            value = self.config
+            for key in keys:
+                if isinstance(value, dict) and key in value:
+                    value = value[key]
+                else:
+                    return default
+            return value
 
     def set(self, key_path: str, value):
         """设置配置值（线程安全），支持点分路径

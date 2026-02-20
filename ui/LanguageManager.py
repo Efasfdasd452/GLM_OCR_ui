@@ -386,6 +386,83 @@ class LanguageManager:
             "it": "Lingua interfaccia:",
             "ru": "Язык интерфейса:"
         },
+        "batch_output_path": {
+            "zh_CN": "输出路径:",
+            "zh_HK": "輸出路徑:",
+            "zh_TW": "輸出路徑:",
+            "en": "Output path:",
+            "fr": "Chemin de sortie:",
+            "de": "Ausgabepfad:",
+            "ja": "出力先:",
+            "it": "Percorso output:",
+            "ru": "Путь вывода:"
+        },
+        "batch_save_mode": {
+            "zh_CN": "输出方式:",
+            "zh_HK": "輸出方式:",
+            "zh_TW": "輸出方式:",
+            "en": "Output format:",
+            "fr": "Format de sortie:",
+            "de": "Ausgabeformat:",
+            "ja": "出力形式:",
+            "it": "Formato output:",
+            "ru": "Формат вывода:"
+        },
+        "batch_save_single_md": {
+            "zh_CN": "每个结果 → Markdown 文件 (.md)",
+            "zh_HK": "每個結果 → Markdown 檔案 (.md)",
+            "zh_TW": "每個結果 → Markdown 檔案 (.md)",
+            "en": "Each result → Markdown (.md)",
+            "fr": "Chaque résultat → Markdown (.md)",
+            "de": "Jedes Ergebnis → Markdown (.md)",
+            "ja": "各結果 → Markdown (.md)",
+            "it": "Ogni risultato → Markdown (.md)",
+            "ru": "Каждый результат → Markdown (.md)"
+        },
+        "batch_save_single_txt": {
+            "zh_CN": "每个结果 → 文本文件 (.txt)",
+            "zh_HK": "每個結果 → 文字檔 (.txt)",
+            "zh_TW": "每個結果 → 文字檔 (.txt)",
+            "en": "Each result → Text (.txt)",
+            "fr": "Chaque résultat → Texte (.txt)",
+            "de": "Jedes Ergebnis → Text (.txt)",
+            "ja": "各結果 → テキスト (.txt)",
+            "it": "Ogni risultato → Testo (.txt)",
+            "ru": "Каждый результат → Текст (.txt)"
+        },
+        "batch_save_zip_md": {
+            "zh_CN": "全部 → 一个 ZIP，内为 Markdown (.md)",
+            "zh_HK": "全部 → 一個 ZIP，內為 Markdown (.md)",
+            "zh_TW": "全部 → 一個 ZIP，內為 Markdown (.md)",
+            "en": "All → one ZIP with Markdown (.md)",
+            "fr": "Tout → un ZIP en Markdown (.md)",
+            "de": "Alle → eine ZIP mit Markdown (.md)",
+            "ja": "全て → 1つのZIP（中身は.md）",
+            "it": "Tutti → un ZIP con Markdown (.md)",
+            "ru": "Всё → один ZIP с Markdown (.md)"
+        },
+        "batch_save_zip_txt": {
+            "zh_CN": "全部 → 一个 ZIP，内为文本 (.txt)",
+            "zh_HK": "全部 → 一個 ZIP，內為文字 (.txt)",
+            "zh_TW": "全部 → 一個 ZIP，內為文字 (.txt)",
+            "en": "All → one ZIP with Text (.txt)",
+            "fr": "Tout → un ZIP en Texte (.txt)",
+            "de": "Alle → eine ZIP mit Text (.txt)",
+            "ja": "全て → 1つのZIP（中身は.txt）",
+            "it": "Tutti → un ZIP con Testo (.txt)",
+            "ru": "Всё → один ZIP с текстом (.txt)"
+        },
+        "batch_save_single_pdf": {
+            "zh_CN": "全部 → 一个 PDF（每页一个结果）",
+            "zh_HK": "全部 → 一個 PDF（每頁一個結果）",
+            "zh_TW": "全部 → 一個 PDF（每頁一個結果）",
+            "en": "All → one PDF (one result per page)",
+            "fr": "Tout → un PDF (un résultat par page)",
+            "de": "Alle → ein PDF (ein Ergebnis pro Seite)",
+            "ja": "全て → 1つのPDF（1結果1ページ）",
+            "it": "Tutti → un PDF (un risultato per pagina)",
+            "ru": "Всё → один PDF (один результат на страницу)"
+        },
         "output_directory": {
             "zh_CN": "输出目录:",
             "zh_HK": "輸出目錄:",
@@ -396,6 +473,72 @@ class LanguageManager:
             "ja": "出力ディレクトリ:",
             "it": "Directory di output:",
             "ru": "Выходной каталог:"
+        },
+        "performance_mode_label": {
+            "zh_CN": "推理模式:",
+            "zh_HK": "推理模式:",
+            "zh_TW": "推理模式:",
+            "en": "Inference Mode:",
+            "fr": "Mode d'inférence:",
+            "de": "Inferenzmodus:",
+            "ja": "推論モード:",
+            "it": "Modalità inferenza:",
+            "ru": "Режим вывода:"
+        },
+        "performance_mode_accurate_fast": {
+            "zh_CN": "高显存·快速·高精度",
+            "zh_HK": "高顯存·快速·高精度",
+            "zh_TW": "高顯存·快速·高精度",
+            "en": "High VRAM · Fast · Accurate",
+            "fr": "VRAM élevée · Rapide · Précise",
+            "de": "Hoher VRAM · Schnell · Genau",
+            "ja": "高VRAM·高速·高精度",
+            "it": "Alto VRAM · Veloce · Accurato",
+            "ru": "Больше VRAM · Быстро · Точно"
+        },
+        "performance_mode_accurate_save": {
+            "zh_CN": "低显存·省资源·高精度",
+            "zh_HK": "低顯存·省資源·高精度",
+            "zh_TW": "低顯存·省資源·高精度",
+            "en": "Low VRAM · Save Resources · Accurate",
+            "fr": "VRAM faible · Économiser · Précise",
+            "de": "Wenig VRAM · Ressourcenschonend · Genau",
+            "ja": "低VRAM·省リソース·高精度",
+            "it": "Basso VRAM · Risparmio · Accurato",
+            "ru": "Меньше VRAM · Экономия · Точно"
+        },
+        "performance_mode_fast_save": {
+            "zh_CN": "低显存·快速·一般精度",
+            "zh_HK": "低顯存·快速·一般精度",
+            "zh_TW": "低顯存·快速·一般精度",
+            "en": "Low VRAM · Fast · Lower Accuracy",
+            "fr": "VRAM faible · Rapide · Précision moindre",
+            "de": "Wenig VRAM · Schnell · Geringere Genauigkeit",
+            "ja": "低VRAM·高速·やや精度低下",
+            "it": "Basso VRAM · Veloce · Precisione minore",
+            "ru": "Меньше VRAM · Быстро · Ниже точность"
+        },
+        "performance_mode_reload_hint": {
+            "zh_CN": "切换后需重新加载模型生效",
+            "zh_HK": "切換後需重新載入模型生效",
+            "zh_TW": "切換後需重新載入模型生效",
+            "en": "Reload model to apply",
+            "fr": "Recharger le modèle pour appliquer",
+            "de": "Modell neu laden zum Übernehmen",
+            "ja": "適用にはモデルの再読み込みが必要",
+            "it": "Ricarica il modello per applicare",
+            "ru": "Перезагрузите модель для применения"
+        },
+        "performance_mode_token_hint": {
+            "zh_CN": "Token 按模式限制：高显存 4096～8192，省显存·高精度 2048～4096，快速省显存 1024～2048",
+            "zh_HK": "Token 依模式限制：高顯存 4096～8192，省顯存·高精度 2048～4096，快速省顯存 1024～2048",
+            "zh_TW": "Token 依模式限制：高顯存 4096～8192，省顯存·高精度 2048～4096，快速省顯存 1024～2048",
+            "en": "Token by mode: High VRAM 4096–8192, Save+Accurate 2048–4096, Fast Save 1024–2048",
+            "fr": "Token par mode : High VRAM 4096–8192, Écon+Précise 2048–4096, Rapide 1024–2048",
+            "de": "Token nach Modus: High VRAM 4096–8192, Sparsam+Genau 2048–4096, Schnell 1024–2048",
+            "ja": "Tokenはモードで制限：高VRAM 4096～8192、省・高精度 2048～4096、高速省 1024～2048",
+            "it": "Token per modo: High VRAM 4096–8192, Risparmio+Accurato 2048–4096, Veloce 1024–2048",
+            "ru": "Token по режиму: High VRAM 4096–8192, Эконом+Точно 2048–4096, Быстро 1024–2048"
         },
         "max_token_limit": {
             "zh_CN": "最大 Token 限制:",

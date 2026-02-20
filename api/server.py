@@ -141,10 +141,26 @@ async def root():
 
 
 # 线程池（用于并发推理）
-executor = ThreadPoolExecutor(max_workers=4)
+executor = ThreadPoolExecutor(max_workers=8)
 
-# 并发控制（防止 GPU OOM）
-inference_semaphore = asyncio.Semaphore(2)  # 最多 2 个并发推理
+# 并发控制：根据模型加载后显存推荐的并发数动态创建，未加载时默认 1
+_inference_semaphore_cache = None
+
+
+def _get_inference_semaphore(manager: ModelManager) -> asyncio.Semaphore:
+    """返回推理信号量。单 GPU 单模型实例不支持并发推理，固定为 1 保证线程安全。"""
+    global _inference_semaphore_cache
+    if not manager.is_loaded():
+        return asyncio.Semaphore(1)
+    if _inference_semaphore_cache is None:
+        _inference_semaphore_cache = asyncio.Semaphore(1)
+    return _inference_semaphore_cache
+
+
+def _clear_inference_semaphore_cache():
+    """模型卸载时清空并发缓存，下次加载后按新显存重建。"""
+    global _inference_semaphore_cache
+    _inference_semaphore_cache = None
 
 
 
@@ -206,6 +222,7 @@ async def unload_model(manager: ModelManager = Depends(get_model_manager)):
     释放 GPU/CPU 内存
     """
     manager.unload_model()
+    _clear_inference_semaphore_cache()
     return {"success": True, "message": "模型已卸载"}
 
 
@@ -242,8 +259,9 @@ async def recognize(
             detail=f"图片过大，最大允许 {max_size_mb}MB"
         )
 
-    # 使用并发控制
-    async with inference_semaphore:
+    # 使用并发控制（根据显存推荐的并发数）
+    semaphore = _get_inference_semaphore(manager)
+    async with semaphore:
         # 在线程池中运行同步推理
         loop = asyncio.get_running_loop()
         start_time = time.time()

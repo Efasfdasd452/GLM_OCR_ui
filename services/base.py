@@ -3,7 +3,7 @@ OCR 服务抽象基类
 定义统一的 OCR 服务接口
 """
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Callable
 
 
 class OCRService(ABC):
@@ -54,7 +54,9 @@ class OCRService(ABC):
         images: List,  # List[Union[str, Path, Image.Image]]
         prompt: str = "Text Recognition:",
         max_new_tokens: int = 2048,
-        progress_callback=None
+        progress_callback=None,
+        stop_check: Optional[Callable[[], bool]] = None,
+        wait_if_paused: Optional[Callable[[], None]] = None
     ) -> List[Dict]:
         """
         批量识别（默认实现：顺序调用单图识别）
@@ -63,7 +65,9 @@ class OCRService(ABC):
             images: 图片列表
             prompt: 识别类型提示词
             max_new_tokens: 最大生成 token 数
-            progress_callback: 进度回调函数
+            progress_callback: 进度回调 (current, total, result)
+            stop_check: 可调用，返回 True 时停止批量
+            wait_if_paused: 可调用，阻塞直到恢复或停止
 
         Returns:
             识别结果列表
@@ -72,6 +76,12 @@ class OCRService(ABC):
         total = len(images)
 
         for i, image in enumerate(images, 1):
+            if stop_check and stop_check():
+                break
+            if wait_if_paused:
+                wait_if_paused()
+            if stop_check and stop_check():
+                break
             try:
                 text = self.recognize_image(image, prompt, max_new_tokens)
                 result = {
@@ -88,7 +98,6 @@ class OCRService(ABC):
 
             results.append(result)
 
-            # 进度回调
             if progress_callback:
                 progress_callback(i, total, result)
 

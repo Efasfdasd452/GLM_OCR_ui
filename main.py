@@ -257,13 +257,15 @@ def start_gui(minimized=False):
             app.after(100, app.hide_window)
 
         app.mainloop()
+    except KeyboardInterrupt:
+        print("\n用户中断 (Ctrl+C)，正在退出...")
     except Exception as e:
         print(f"GUI 启动失败: {e}")
         import traceback
         traceback.print_exc()
         input("按任意键退出...")
     finally:
-        # 确保退出时停止 API 服务器
+        # 确保退出时停止 API 服务器（KeyboardInterrupt 和 Exception 均触发）
         api_server_manager.stop()
 
 
@@ -382,6 +384,7 @@ def main():
     args = parser.parse_args()
 
     # 从配置读取默认值
+    config = None
     try:
         from core.Config import Config
         config = Config(str(BASE_DIR / "config.json"), base_dir=BASE_DIR)
@@ -401,11 +404,8 @@ def main():
     elif args.server:
         start_api_server(host, port)
     else:
-        # 读取配置的启动模式
-        try:
-            startup_mode = config.get("app.startup_mode", "ui")
-        except (NameError, AttributeError):
-            startup_mode = "ui"
+        # 读取配置的启动模式（配置加载失败时用 "ui"）
+        startup_mode = config.get("app.startup_mode", "ui") if config else "ui"
 
         if startup_mode == "api":
             start_api_server(host, port)

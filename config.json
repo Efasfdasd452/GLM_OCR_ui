@@ -1,13 +1,14 @@
 {
   "model": {
     "name": "zai-org/GLM-OCR",
-    "local_path": "./models/GLM-OCR",
+    "local_path": "C:\\Users\\ASUS\\important_files\\py_local\\glm_ocr\\models\\GLM-OCR",
     "device": "auto",
     "dtype": "float16",
-    "max_new_tokens": 2048,
+    "max_new_tokens": 4096,
     "max_new_tokens_limit": 8192,
     "use_local_only": true,
-    "quantization": "8bit"
+    "quantization": "8bit",
+    "performance_mode": "accurate_fast"
   },
   "ocr": {
     "language": "简体中文",
@@ -19,7 +20,8 @@
     "recursive": false,
     "output_dir": "./output",
     "filename_format": "[OCR]_{name}_{date}",
-    "date_format": "%Y%m%d_%H%M%S"
+    "date_format": "%Y%m%d_%H%M%S",
+    "save_mode": "single_pdf"
   },
   "ui": {
     "theme": "light",
@@ -41,6 +43,7 @@
     "remote_url": "http://127.0.0.1:18000",
     "remote_host": "127.0.0.1",
     "remote_port": 18000,
+    "remote_timeout": 60,
     "auto_load_model": true,
     "max_image_size_mb": 10
   },

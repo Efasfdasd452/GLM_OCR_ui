@@ -3,6 +3,7 @@
 使用 CustomTkinter 构建现代化 UI
 """
 import threading
+import time
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -10,7 +11,12 @@ import httpx
 import customtkinter as ctk
 
 from core.Config import Config
-from core.OCREngine import OCREngine
+from core.OCREngine import (
+    OCREngine,
+    get_smart_performance_params,
+    get_effective_max_new_tokens,
+    get_token_limits_for_performance_mode,
+)
 from services.local_service import LocalOCRService
 from services.remote_service import RemoteOCRService
 from ui.LanguageManager import LanguageManager
@@ -162,6 +168,10 @@ class MainWindow(ctk.CTk):
         self.recursive_checkbox.configure(font=self._font())
         self.btn_clear_list.configure(font=self._font())
         self.btn_start_batch.configure(font=self._font())
+        if hasattr(self, "btn_batch_pause"):
+            self.btn_batch_pause.configure(font=self._font())
+        if hasattr(self, "btn_batch_stop"):
+            self.btn_batch_stop.configure(font=self._font())
         self.file_list_label.configure(font=self._font())
         self.file_listbox.configure(font=self._font())
         self.progress_label.configure(font=self._font())
@@ -364,16 +374,25 @@ class MainWindow(ctk.CTk):
         self.token_label = ctk.CTkLabel(self.control_frame, text=self.lang.get("token_count"))
         self.token_label.grid(row=0, column=2, padx=(20, 5), pady=10)
 
-        # Token 滑块
-        max_limit = self.config.get("model.max_new_tokens_limit", 8192)
+        # Token 滑块（范围按当前推理模式限制）
+        perf_mode = self.config.get("model.performance_mode", "accurate_save")
+        mode_min, mode_max = get_token_limits_for_performance_mode(perf_mode)
+        global_limit = self.config.get("model.max_new_tokens_limit", 8192)
+        slider_max = min(mode_max, global_limit)
         self.token_slider = ctk.CTkSlider(
             self.control_frame,
-            from_=512,
-            to=max_limit,
+            from_=mode_min,
+            to=slider_max,
             number_of_steps=None,
             width=200,
             command=self.on_token_change
         )
+        # 初始值钳位到模式范围内
+        user_tokens = self.config.get("model.max_new_tokens", 2048)
+        if isinstance(user_tokens, float):
+            user_tokens = int(user_tokens)
+        self.current_tokens = get_effective_max_new_tokens(perf_mode, int(user_tokens), int(global_limit))
+        self.config.set("model.max_new_tokens", self.current_tokens)
         self.token_slider.set(self.current_tokens)
         self.token_slider.grid(row=0, column=3, padx=5, pady=10)
 
@@ -492,7 +511,7 @@ class MainWindow(ctk.CTk):
     def create_batch_tab(self):
         """创建批量OCR标签页"""
         self.tab_batch.grid_columnconfigure(0, weight=1)
-        self.tab_batch.grid_rowconfigure(2, weight=1)
+        self.tab_batch.grid_rowconfigure(4, weight=1)
 
         # 控制区
         self.batch_control_frame = ctk.CTkFrame(self.tab_batch)
@@ -535,19 +554,101 @@ class MainWindow(ctk.CTk):
         )
         self.btn_start_batch.grid(row=0, column=4, padx=5, pady=5)
 
+        self.batch_pause_event = threading.Event()
+        self.batch_stop_event = threading.Event()
+        self.btn_batch_pause = ctk.CTkButton(
+            self.batch_control_frame,
+            text="暂停",
+            command=self._toggle_batch_pause,
+            state="disabled"
+        )
+        self.btn_batch_pause.grid(row=0, column=5, padx=5, pady=5)
+        self.btn_batch_stop = ctk.CTkButton(
+            self.batch_control_frame,
+            text="停止",
+            command=self._stop_batch_ocr,
+            fg_color="red",
+            state="disabled"
+        )
+        self.btn_batch_stop.grid(row=0, column=6, padx=5, pady=5)
+
+        # 输出路径与输出方式
+        self.batch_output_path_var = ctk.StringVar(value=self.config.get("batch.output_dir", "./output"))
+        batch_path_frame = ctk.CTkFrame(self.tab_batch, fg_color="transparent")
+        batch_path_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(10, 4))
+        batch_path_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(batch_path_frame, text=self.lang.get("batch_output_path"), font=("Microsoft YaHei UI", 12)).grid(
+            row=0, column=0, padx=(0, 8), pady=0, sticky="w"
+        )
+        ctk.CTkEntry(batch_path_frame, textvariable=self.batch_output_path_var, width=320).grid(
+            row=0, column=1, padx=0, pady=0, sticky="ew"
+        )
+
+        def browse_batch_output():
+            folder = filedialog.askdirectory(title="选择批量输出路径", parent=self.tab_batch)
+            if folder:
+                self.batch_output_path_var.set(folder)
+                self.config.set("batch.output_dir", folder)
+                self.config.save_config()
+                self.log(f"批量输出路径: {folder}")
+
+        ctk.CTkButton(batch_path_frame, text=self.lang.get("browse"), command=browse_batch_output, width=70).grid(
+            row=0, column=2, padx=(8, 0), pady=0
+        )
+
+        save_mode_keys = [
+            FileUtils.BATCH_SAVE_SINGLE_MD,
+            FileUtils.BATCH_SAVE_SINGLE_TXT,
+            FileUtils.BATCH_SAVE_ZIP_MD,
+            FileUtils.BATCH_SAVE_ZIP_TXT,
+            FileUtils.BATCH_SAVE_SINGLE_PDF,
+        ]
+        save_mode_displays = [
+            self.lang.get("batch_save_single_md"),
+            self.lang.get("batch_save_single_txt"),
+            self.lang.get("batch_save_zip_md"),
+            self.lang.get("batch_save_zip_txt"),
+            self.lang.get("batch_save_single_pdf"),
+        ]
+        current_save_mode = self.config.get("batch.save_mode", FileUtils.BATCH_SAVE_SINGLE_MD)
+        save_mode_index = save_mode_keys.index(current_save_mode) if current_save_mode in save_mode_keys else 0
+        self.batch_save_mode_var = ctk.StringVar(value=save_mode_displays[save_mode_index])
+
+        save_mode_frame = ctk.CTkFrame(self.tab_batch, fg_color="transparent")
+        save_mode_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(4, 10))
+        save_mode_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(save_mode_frame, text=self.lang.get("batch_save_mode"), font=("Microsoft YaHei UI", 12)).grid(
+            row=0, column=0, padx=(0, 8), pady=0, sticky="w"
+        )
+
+        def on_batch_save_mode_change(choice):
+            idx = save_mode_displays.index(choice) if choice in save_mode_displays else 0
+            self.config.set("batch.save_mode", save_mode_keys[idx])
+            self.config.save_config()
+            self.log(f"批量输出方式: {choice}")
+
+        ctk.CTkOptionMenu(
+            save_mode_frame,
+            variable=self.batch_save_mode_var,
+            values=save_mode_displays,
+            width=380,
+            font=("Microsoft YaHei UI", 12),
+            command=on_batch_save_mode_change,
+        ).grid(row=0, column=1, padx=0, pady=0, sticky="w")
+
         # 文件列表
         self.file_list_label = ctk.CTkLabel(self.tab_batch, text="待处理文件:")
-        self.file_list_label.grid(row=1, column=0, padx=10, pady=(10, 5), sticky="w")
+        self.file_list_label.grid(row=3, column=0, padx=10, pady=(10, 5), sticky="w")
 
         self.file_listbox = ctk.CTkTextbox(self.tab_batch, height=200)
-        self.file_listbox.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        self.file_listbox.grid(row=4, column=0, padx=10, pady=(0, 10), sticky="nsew")
 
         # 进度条
         self.progress_label = ctk.CTkLabel(self.tab_batch, text="进度: 0/0")
-        self.progress_label.grid(row=3, column=0, padx=10, pady=(5, 0), sticky="w")
+        self.progress_label.grid(row=5, column=0, padx=10, pady=(5, 0), sticky="w")
 
         self.progress_bar = ctk.CTkProgressBar(self.tab_batch)
-        self.progress_bar.grid(row=4, column=0, padx=10, pady=(5, 10), sticky="ew")
+        self.progress_bar.grid(row=6, column=0, padx=10, pady=(5, 10), sticky="ew")
         self.progress_bar.set(0)
 
         # 批量文件列表
@@ -967,7 +1068,8 @@ class MainWindow(ctk.CTk):
                 remote_url = f"http://{bracket}:{r_port}"
             else:
                 remote_url = self.config.get("api.remote_url", "http://127.0.0.1:8000")
-            self.ocr_service = RemoteOCRService(remote_url)
+            timeout = self.config.get("api.remote_timeout", 60)
+            self.ocr_service = RemoteOCRService(remote_url, timeout=timeout)
             self.log(f"使用远程 OCR 服务: {remote_url}")
 
             # 检查远程服务状态
@@ -995,7 +1097,8 @@ class MainWindow(ctk.CTk):
 
         self._using_local_api = True
         self._api_poll_errors = 0
-        self.ocr_service = RemoteOCRService(base_url)
+        timeout = self.config.get("api.remote_timeout", 60)
+        self.ocr_service = RemoteOCRService(base_url, timeout=timeout)
 
         # 更新 UI 状态
         self.model_status_label.configure(text="API 模型加载中...", text_color="orange")
@@ -1132,7 +1235,23 @@ class MainWindow(ctk.CTk):
             try:
                 self.log("开始加载模型...")
                 self.after(0, lambda: self.btn_load_model.configure(state="disabled", text="加载中..."))
-                quantization = self.config.get("model.quantization", "none")
+                # 若已加载过模型，先卸载再加载，避免双倍显存与卡死
+                if self.ocr_engine is not None and self.ocr_engine.is_loaded():
+                    self.log("正在卸载旧模型...")
+                    self.ocr_engine.unload_model()
+                    self.ocr_engine = None
+                    self.ocr_service = None
+                    self.model_loaded = False
+                    import gc
+                    import torch
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                perf_mode = self.config.get("model.performance_mode")
+                if perf_mode is None:
+                    q = self.config.get("model.quantization", "none")
+                    perf_mode = {"4bit": "fast_save", "8bit": "accurate_save"}.get(q, "accurate_save")
+                quantization, max_image_long_edge = get_smart_performance_params(perf_mode)
                 dtype = self.config.get("model.dtype", "float16")
                 if self.config.get("model.use_local_only"):
                     self.ocr_engine = OCREngine(
@@ -1140,14 +1259,16 @@ class MainWindow(ctk.CTk):
                         device=self.config.get("model.device"),
                         use_local_only=self.config.get("model.use_local_only"),
                         quantization=quantization,
-                        dtype=dtype
+                        dtype=dtype,
+                        max_image_long_edge=max_image_long_edge
                     )
                 else:
                     self.ocr_engine = OCREngine(
                         model_path=self.config.get("model.name"),
                         device=self.config.get("model.device"),
                         quantization=quantization,
-                        dtype=dtype
+                        dtype=dtype,
+                        max_image_long_edge=max_image_long_edge
                     )
 
                 success = self.ocr_engine.load_model(
@@ -1383,7 +1504,7 @@ class MainWindow(ctk.CTk):
                 text = self.ocr_service.recognize_image(
                     page_image,
                     prompt="Document Parsing:",
-                    max_new_tokens=self.current_tokens
+                    max_new_tokens=self._get_effective_max_new_tokens()
                 )
 
                 page_image.close()
@@ -1552,7 +1673,7 @@ class MainWindow(ctk.CTk):
                         ocr_result = self.ocr_service.recognize_image(
                             image,
                             prompt="Text Recognition:",
-                            max_new_tokens=self.current_tokens
+                            max_new_tokens=self._get_effective_max_new_tokens()
                         )
                         if ocr_result and ocr_result.strip():
                             output_parts.append(f"[文字识别结果]\n{ocr_result}")
@@ -1578,7 +1699,7 @@ class MainWindow(ctk.CTk):
                     result = self.ocr_service.recognize_image(
                         image,
                         prompt=prompt,
-                        max_new_tokens=self.current_tokens
+                        max_new_tokens=self._get_effective_max_new_tokens()
                     )
 
                     if result:
@@ -1755,7 +1876,7 @@ class MainWindow(ctk.CTk):
                 result = self.ocr_service.recognize_image(
                     self._current_image,
                     prompt="Formula Recognition:",
-                    max_new_tokens=self.current_tokens
+                    max_new_tokens=self._get_effective_max_new_tokens()
                 )
 
                 if result:
@@ -1903,6 +2024,37 @@ class MainWindow(ctk.CTk):
         for i, file in enumerate(self.batch_files, 1):
             self.file_listbox.insert("end", f"{i}. {file}\n")
 
+    def _wait_until_batch_resumed_or_stopped(self):
+        """在批量线程中调用：若当前为暂停状态则阻塞，直到用户点击恢复或停止。"""
+        while self.batch_pause_event.is_set() and not self.batch_stop_event.is_set():
+            time.sleep(0.2)
+
+    def _toggle_batch_pause(self):
+        """切换批量识别暂停/恢复。"""
+        if self.batch_pause_event.is_set():
+            self.batch_pause_event.clear()
+            self.btn_batch_pause.configure(text="暂停")
+            self.log("批量识别已恢复")
+            ToastNotification.show(self, "批量识别已恢复")
+        else:
+            self.batch_pause_event.set()
+            self.btn_batch_pause.configure(text="恢复")
+            self.log("批量识别已暂停")
+            ToastNotification.show(self, "⏸ 批量识别已暂停")
+
+    def _stop_batch_ocr(self):
+        """请求停止批量识别。"""
+        self.batch_stop_event.set()
+        self.log("正在停止批量识别...")
+
+    def _on_batch_finished(self, was_stopped=False):
+        """批量识别结束（正常完成或停止）时重置 UI。"""
+        self.btn_start_batch.configure(state="normal")
+        self.btn_batch_pause.configure(state="disabled", text="暂停")
+        self.btn_batch_stop.configure(state="disabled")
+        self.batch_pause_event.clear()
+        self.batch_stop_event.clear()
+
     def start_batch_ocr(self):
         """启动后台线程对批量文件列表中的所有图片依次进行 OCR 识别。"""
         if not self.model_loaded:
@@ -1913,53 +2065,94 @@ class MainWindow(ctk.CTk):
             messagebox.showwarning("警告", "请先添加要处理的文件")
             return
 
+        self.batch_pause_event.clear()
+        self.batch_stop_event.clear()
+        self.btn_start_batch.configure(state="disabled")
+        self.btn_batch_pause.configure(state="normal", text="暂停")
+        self.btn_batch_stop.configure(state="normal")
+
         def batch_thread():
+            # 确保在工作线程内也清除停止标志，避免上次停止残留导致本次一进入就退出
+            self.batch_stop_event.clear()
+            self.batch_pause_event.clear()
+
             total = len(self.batch_files)
             self.log(f"开始批量识别 {total} 个文件...")
 
-            def progress_callback(current, totals):
-                progress = current / totals
-                self.progress_bar.set(progress)
-                self.progress_label.configure(text=f"进度: {current}/{totals}")
-                self.log(f"[{current}/{totals}] 识别完成")
+            def progress_callback(current, total_count, result):
+                progress = current / total_count if total_count else 0
+                self.after(0, lambda p=progress: self.progress_bar.set(p))
+                self.after(0, lambda c=current, t=total_count: self.progress_label.configure(text=f"进度: {c}/{t}"))
+                self.log(f"[{current}/{total_count}] 识别完成")
 
             _, prompt = self._get_prompt_for_current_type()
 
             if not self.ocr_service:
                 self.log("✗ OCR 服务未就绪")
-                messagebox.showerror("错误", "OCR 服务未就绪")
+                self.after(0, self._on_batch_finished)
+                self.after(0, lambda: messagebox.showerror("错误", "OCR 服务未就绪"))
                 return
 
-            results = self.ocr_service.recognize_batch(
-                self.batch_files,
-                prompt=prompt,
-                progress_callback=progress_callback,
-                max_new_tokens=self.current_tokens
-            )
-
-            # 保存结果
-            output_dir = FileUtils.ensure_directory(self.config.get("batch.output_dir"))
-            success_count = 0
-
-            for result in results:
-                if result["success"]:
-                    filename = FileUtils.generate_output_filename(
-                        Path(result["image"]).name,
-                        self.config.get("batch.filename_format"),
-                        self.config.get("batch.date_format"),
-                        self.config.get("ocr.output_format")
+            stop_check = lambda: self.batch_stop_event.is_set()
+            wait_if_paused = self._wait_until_batch_resumed_or_stopped
+            results = []
+            if hasattr(self.ocr_service, "recognize_batch"):
+                try:
+                    results = self.ocr_service.recognize_batch(
+                        self.batch_files,
+                        prompt=prompt,
+                        progress_callback=progress_callback,
+                        max_new_tokens=self._get_effective_max_new_tokens(),
+                        stop_check=stop_check,
+                        wait_if_paused=wait_if_paused
                     )
-                    output_path = output_dir / filename
+                except Exception as e:
+                    self.log(f"批量识别异常: {e}")
+                    self.after(0, self._on_batch_finished)
+                    self.after(0, lambda: messagebox.showerror("错误", str(e)))
+                    return
+            else:
+                self.log("✗ 当前 OCR 服务不支持批量识别")
+                self.after(0, self._on_batch_finished)
+                self.after(0, lambda: messagebox.showerror("错误", "当前 OCR 服务不支持批量识别"))
+                return
 
-                    if FileUtils.save_result(
-                            result["text"],
-                            output_path,
-                            self.config.get("ocr.output_format")
-                    ):
-                        success_count += 1
+            was_stopped = self.batch_stop_event.is_set()
 
-            self.log(f"✓ 批量识别完成: {success_count}/{total} 成功")
-            messagebox.showinfo("完成", f"批量识别完成\n成功: {success_count}/{total}")
+            # 按用户选择的输出方式保存（路径取当前界面或配置）
+            output_dir_str = self.batch_output_path_var.get().strip() or self.config.get("batch.output_dir", "./output")
+            self.config.set("batch.output_dir", output_dir_str)
+            self.config.save_config()
+            output_dir = FileUtils.ensure_directory(output_dir_str)
+            save_mode = self.config.get("batch.save_mode", FileUtils.BATCH_SAVE_SINGLE_MD)
+            success_count, saved_path = FileUtils.save_batch_results(
+                results,
+                output_dir,
+                save_mode,
+                self.config.get("batch.filename_format"),
+                self.config.get("batch.date_format"),
+            )
+            if save_mode == FileUtils.BATCH_SAVE_SINGLE_PDF and success_count == 0 and saved_path:
+                self.log(f"PDF 保存失败: {saved_path}")
+
+            if was_stopped:
+                self.log(f"批量识别已停止，已处理 {len(results)}/{total}，成功保存 {success_count} 条")
+                msg = f"批量识别已停止\n已处理: {len(results)}/{total}\n成功保存: {success_count} 条"
+                if success_count > 0 and saved_path:
+                    msg += f"\n保存位置: {saved_path}"
+                elif success_count == 0 and saved_path and save_mode == FileUtils.BATCH_SAVE_SINGLE_PDF:
+                    msg += f"\n说明: {saved_path}"
+                self.after(0, lambda: messagebox.showinfo("已停止", msg))
+            else:
+                self.log(f"✓ 批量识别完成: 成功保存 {success_count}/{total} 条")
+                msg = f"批量识别完成\n成功保存: {success_count}/{total} 条"
+                if success_count > 0 and saved_path:
+                    msg += f"\n保存位置: {saved_path}"
+                elif success_count == 0 and saved_path and save_mode == FileUtils.BATCH_SAVE_SINGLE_PDF:
+                    msg += f"\n说明: {saved_path}"
+                self.after(0, lambda: messagebox.showinfo("完成", msg))
+
+            self.after(0, self._on_batch_finished)
 
         threading.Thread(target=batch_thread, daemon=True).start()
 
@@ -1970,6 +2163,31 @@ class MainWindow(ctk.CTk):
             value: 选中的识别类型名称
         """
         self.log(f"切换识别类型: {value}")
+
+    def _get_effective_max_new_tokens(self) -> int:
+        """按当前推理模式钳位后的 token 数（模式优先于用户设置）。"""
+        perf_mode = self.config.get("model.performance_mode", "accurate_save")
+        user_val = self.config.get("model.max_new_tokens", self.current_tokens)
+        if isinstance(user_val, float):
+            user_val = int(user_val)
+        global_limit = self.config.get("model.max_new_tokens_limit", 8192)
+        return get_effective_max_new_tokens(perf_mode, int(user_val), int(global_limit))
+
+    def _refresh_token_ui_for_mode(self):
+        """推理模式变更后刷新 Token 滑块范围与当前值（按新模式钳位）。"""
+        if not hasattr(self, "token_slider") or self.token_slider is None:
+            return
+        perf_mode = self.config.get("model.performance_mode", "accurate_save")
+        mode_min, mode_max = get_token_limits_for_performance_mode(perf_mode)
+        global_limit = self.config.get("model.max_new_tokens_limit", 8192)
+        slider_max = min(mode_max, global_limit)
+        self.token_slider.configure(from_=mode_min, to=slider_max)
+        self.current_tokens = self._get_effective_max_new_tokens()
+        self.config.set("model.max_new_tokens", self.current_tokens)
+        self.config.save_config()
+        self.token_slider.set(self.current_tokens)
+        if hasattr(self, "token_value_var") and self.token_value_var is not None:
+            self.token_value_var.set(str(self.current_tokens))
 
     def on_token_change(self, value):
         """Token 滑块值变化回调
@@ -2004,17 +2222,20 @@ class MainWindow(ctk.CTk):
             input_value = self.token_value_var.get().strip()
             token_value = int(input_value)
 
-            # 获取限制值
-            min_tokens = 512
-            max_tokens = self.config.get("model.max_new_tokens_limit", 8192)
+            # 按推理模式限制范围（模式优先于用户设置）
+            perf_mode = self.config.get("model.performance_mode", "accurate_save")
+            mode_min, mode_max = get_token_limits_for_performance_mode(perf_mode)
+            global_limit = self.config.get("model.max_new_tokens_limit", 8192)
+            min_tokens = mode_min
+            max_tokens = min(mode_max, global_limit)
 
             # 范围验证
             if token_value < min_tokens:
                 token_value = min_tokens
-                ToastNotification.show(self, f"⚠ Token 值不能小于 {min_tokens}，已自动调整", duration=2000)
+                ToastNotification.show(self, f"⚠ 当前推理模式要求 Token ≥ {min_tokens}，已自动调整", duration=2000)
             elif token_value > max_tokens:
                 token_value = max_tokens
-                ToastNotification.show(self, f"⚠ Token 值不能超过 {max_tokens}，已自动调整", duration=2000)
+                ToastNotification.show(self, f"⚠ 当前推理模式限制 Token ≤ {max_tokens}，已自动调整", duration=2000)
 
             # 更新值
             self.current_tokens = token_value
@@ -2042,7 +2263,7 @@ class MainWindow(ctk.CTk):
         """打开设置窗口，包含语言、字体、输出目录、API 配置等选项。"""
         settings_win = ctk.CTkToplevel(self)
         settings_win.title(self.lang.get("settings_title"))
-        settings_win.geometry("580x980")
+        settings_win.geometry("580x1040")
         settings_win.resizable(False, False)
         settings_win.grab_set()
 
@@ -2204,13 +2425,63 @@ class MainWindow(ctk.CTk):
             row=5, column=2, padx=10, pady=12
         )
 
+        # ========== 推理模式设置 ==========
+        perf_mode_keys = ["accurate_fast", "accurate_save", "fast_save"]
+        perf_mode_displays = [
+            self.lang.get("performance_mode_accurate_fast"),
+            self.lang.get("performance_mode_accurate_save"),
+            self.lang.get("performance_mode_fast_save"),
+        ]
+        current_perf = self.config.get("model.performance_mode", "accurate_save")
+        current_perf_index = perf_mode_keys.index(current_perf) if current_perf in perf_mode_keys else 0
+
+        ctk.CTkLabel(settings_win, text=self.lang.get("performance_mode_label"), font=("Microsoft YaHei UI", 14)).grid(
+            row=6, column=0, padx=(40, 10), pady=12, sticky="w"
+        )
+        performance_mode_var = ctk.StringVar(settings_win, value=perf_mode_displays[current_perf_index])
+
+        def on_performance_mode_change(choice):
+            idx = perf_mode_displays.index(choice) if choice in perf_mode_displays else 0
+            key = perf_mode_keys[idx]
+            self.config.set("model.performance_mode", key)
+            self.config.save_config()
+            self._refresh_token_ui_for_mode()
+            ToastNotification.show(
+                settings_win,
+                f"{self.lang.get('performance_mode_reload_hint')}",
+                duration=2500
+            )
+            self.log(f"推理模式已设置为: {choice}（需重新加载模型生效）")
+
+        perf_mode_menu = ctk.CTkOptionMenu(
+            settings_win,
+            variable=performance_mode_var,
+            values=perf_mode_displays,
+            width=280,
+            font=("Microsoft YaHei UI", 12),
+            command=on_performance_mode_change
+        )
+        perf_mode_menu.grid(row=6, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        ctk.CTkLabel(
+            settings_win,
+            text=self.lang.get("performance_mode_reload_hint"),
+            font=("Microsoft YaHei UI", 11),
+            text_color="gray"
+        ).grid(row=7, column=0, columnspan=3, padx=(40, 10), pady=(0, 4), sticky="w")
+        ctk.CTkLabel(
+            settings_win,
+            text=self.lang.get("performance_mode_token_hint"),
+            font=("Microsoft YaHei UI", 10),
+            text_color="gray"
+        ).grid(row=8, column=0, columnspan=3, padx=(40, 10), pady=(0, 12), sticky="w")
+
         # ========== 最大 Token 限制设置 ==========
         ctk.CTkLabel(settings_win, text=self.lang.get("max_token_limit"), font=("Microsoft YaHei UI", 14)).grid(
-            row=6, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=9, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         max_tokens_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        max_tokens_frame.grid(row=6, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        max_tokens_frame.grid(row=9, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         max_tokens_entry = ctk.CTkEntry(max_tokens_frame, width=120)
         max_tokens_entry.insert(0, str(self.config.get("model.max_new_tokens_limit", 8192)))
@@ -2231,13 +2502,7 @@ class MainWindow(ctk.CTk):
 
                 self.config.set("model.max_new_tokens_limit", new_value)
                 self.config.save_config()
-
-                # 更新主界面滑块
-                self.token_slider.configure(to=new_value)
-                if self.current_tokens > new_value:
-                    self.current_tokens = new_value
-                    self.token_slider.set(new_value)
-                    self.token_value_var.set(str(new_value))
+                self._refresh_token_ui_for_mode()
 
                 toast_text = self.lang.get("toast_token_saved")
                 ToastNotification.show(settings_win, f"{toast_text} {new_value}", duration=1500)
@@ -2260,7 +2525,7 @@ class MainWindow(ctk.CTk):
 
         # ========== 截图提示设置 ==========
         ctk.CTkLabel(settings_win, text=self.lang.get("screenshot_prompt"), font=("Microsoft YaHei UI", 14)).grid(
-            row=7, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=10, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         screenshot_reminder_var = ctk.BooleanVar(
@@ -2284,11 +2549,11 @@ class MainWindow(ctk.CTk):
             variable=screenshot_reminder_var,
             command=save_screenshot_reminder
         )
-        screenshot_reminder_checkbox.grid(row=7, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        screenshot_reminder_checkbox.grid(row=10, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # ========== 公式修复完成提示设置 ==========
         ctk.CTkLabel(settings_win, text="公式修复提示:", font=("Microsoft YaHei UI", 14)).grid(
-            row=8, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=11, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         formula_completion_var = ctk.BooleanVar(
@@ -2312,11 +2577,11 @@ class MainWindow(ctk.CTk):
             variable=formula_completion_var,
             command=save_formula_completion_reminder
         )
-        formula_completion_checkbox.grid(row=8, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        formula_completion_checkbox.grid(row=11, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # ========== API 客户端模式设置 ==========
         ctk.CTkLabel(settings_win, text="客户端模式", font=("Microsoft YaHei UI", 14)).grid(
-            row=9, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=12, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         api_mode_var = ctk.StringVar(settings_win, value=self.config.get("api.mode", "local"))
@@ -2326,7 +2591,7 @@ class MainWindow(ctk.CTk):
             self.config.save_config()
             # 根据模式显示/隐藏远程 URL 框
             if mode == "remote":
-                remote_frame.grid(row=10, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+                remote_frame.grid(row=13, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
             else:
                 remote_frame.grid_forget()
             # 重新初始化服务
@@ -2339,7 +2604,7 @@ class MainWindow(ctk.CTk):
             values=["local", "remote"],
             command=on_mode_change,
             width=200
-        ).grid(row=9, column=1, padx=10, pady=12, sticky="w")
+        ).grid(row=12, column=1, padx=10, pady=12, sticky="w")
 
         # 远程地址配置框（仅远程模式显示）
         remote_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
@@ -2471,16 +2736,16 @@ class MainWindow(ctk.CTk):
 
         # 根据当前模式决定是否显示
         if api_mode_var.get() == "remote":
-            remote_frame.grid(row=10, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+            remote_frame.grid(row=13, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
 
         # ========== API 服务器设置 ==========
         ctk.CTkLabel(settings_win, text="API 服务器", font=("Microsoft YaHei UI", 14)).grid(
-            row=11, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=13, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         # API 状态和控制区
         api_control_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        api_control_frame.grid(row=11, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        api_control_frame.grid(row=13, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # 状态标签
         api_running = self.api_server_running
@@ -2531,11 +2796,11 @@ class MainWindow(ctk.CTk):
 
         # 监听地址 + 端口 (同一行)
         ctk.CTkLabel(settings_win, text="监听地址:", font=("Microsoft YaHei UI", 12)).grid(
-            row=12, column=0, padx=(40, 10), pady=8, sticky="w"
+            row=14, column=0, padx=(40, 10), pady=8, sticky="w"
         )
 
         listen_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        listen_frame.grid(row=12, column=1, columnspan=2, padx=10, pady=8, sticky="w")
+        listen_frame.grid(row=14, column=1, columnspan=2, padx=10, pady=8, sticky="w")
 
         listen_host_entry = ctk.CTkEntry(listen_frame, width=150,
                                           placeholder_text="127.0.0.1")
@@ -2603,7 +2868,7 @@ class MainWindow(ctk.CTk):
 
         # ========== 启动模式设置 ==========
         ctk.CTkLabel(settings_win, text="启动模式", font=("Microsoft YaHei UI", 14)).grid(
-            row=13, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=15, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         startup_mode_map = {
@@ -2654,11 +2919,11 @@ class MainWindow(ctk.CTk):
             command=on_startup_mode_change,
             width=250,
             font=("Microsoft YaHei UI", 12)
-        ).grid(row=13, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        ).grid(row=15, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # ========== 开机自动启动设置 ==========
         ctk.CTkLabel(settings_win, text="开机自启", font=("Microsoft YaHei UI", 14)).grid(
-            row=14, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=16, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         # 读取注册表中的实际状态
@@ -2688,15 +2953,15 @@ class MainWindow(ctk.CTk):
             variable=auto_start_var,
             command=save_auto_start
         )
-        auto_start_checkbox.grid(row=14, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        auto_start_checkbox.grid(row=16, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         # ========== 关闭行为设置 ==========
         ctk.CTkLabel(settings_win, text="关闭行为", font=("Microsoft YaHei UI", 14)).grid(
-            row=15, column=0, padx=(40, 10), pady=12, sticky="w"
+            row=17, column=0, padx=(40, 10), pady=12, sticky="w"
         )
 
         close_behavior_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        close_behavior_frame.grid(row=15, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        close_behavior_frame.grid(row=17, column=1, columnspan=2, padx=10, pady=12, sticky="w")
 
         current_choice = self.config.get("ui.minimize_to_tray", None)
         if current_choice is True:
@@ -2735,7 +3000,7 @@ class MainWindow(ctk.CTk):
             command=settings_win.destroy,
             width=120,
             height=35
-        ).grid(row=16, column=0, columnspan=3, pady=(25, 20))
+        ).grid(row=18, column=0, columnspan=3, pady=(25, 20))
 
     def _save_language(self, language, parent_win):
         """保存语言设置

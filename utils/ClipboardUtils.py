@@ -120,19 +120,29 @@ class ClipboardUtils:
             return True
 
         except ImportError:
-            # 如果没有 win32clipboard，尝试使用 PIL 的方法
+            # 如果没有 win32clipboard，尝试使用平台方式
             try:
                 import subprocess
                 import platform
+                import tempfile
 
-                if platform.system() == 'Darwin':  # macOS
-                    # 使用 pbcopy
-                    subprocess.Popen(
-                        ['osascript', '-e', 'set the clipboard to (read (POSIX file "' +
-                         str(image) + '") as JPEG picture)'],
-                        stdin=subprocess.PIPE
-                    )
-                    return True
+                if platform.system() == 'Darwin':  # macOS：先存临时 JPEG 再交给 osascript
+                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                        image.convert("RGB").save(tmp.name, "JPEG")
+                        path = tmp.name
+                    try:
+                        subprocess.run(
+                            ["osascript", "-e", "set the clipboard to (read (POSIX file \"" + path + "\") as JPEG picture)"],
+                            check=True,
+                            timeout=5,
+                        )
+                        return True
+                    finally:
+                        try:
+                            import os
+                            os.unlink(path)
+                        except OSError:
+                            pass
                 else:
                     print("不支持的操作系统")
                     return False

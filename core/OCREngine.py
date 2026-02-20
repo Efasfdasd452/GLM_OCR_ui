@@ -7,15 +7,127 @@ OCR 引擎模块
 import gc
 import torch
 from pathlib import Path
-from typing import Union, List, Dict, Optional
+from typing import Union, List, Dict, Optional, Callable
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForImageTextToText
+
+
+# 三种推理模式对应的 token 范围（min, max）。模式优先于用户设置：实际使用时会在此范围内钳位。
+# 保证长文/高显存模式有足够 token，省显存模式限制上限避免 OOM。
+PERFORMANCE_MODE_TOKEN_LIMITS = {
+    "accurate_fast": (4096, 8192),   # 高显存：至少 4096，上限 8192
+    "accurate_save": (2048, 4096),    # 平衡：2048～4096
+    "fast_save": (1024, 2048),        # 省显存：上限 2048
+}
+
+
+def get_token_limits_for_performance_mode(mode: str) -> tuple:
+    """
+    返回当前推理模式允许的 token 范围 (min_tokens, max_tokens)。
+    用于界面滑块范围与有效 token 计算。
+    """
+    return PERFORMANCE_MODE_TOKEN_LIMITS.get(mode, (2048, 4096))
+
+
+def get_effective_max_new_tokens(performance_mode: str, user_value: int, global_limit: int) -> int:
+    """
+    按推理模式钳位用户设置的 token 数：模式优先于用户设置。
+    例如选择「准确快速」时最低 4096，即使用户填 2048 也会按 4096 使用。
+    """
+    min_t, max_t = get_token_limits_for_performance_mode(performance_mode)
+    cap = min(max_t, global_limit)
+    return max(min_t, min(user_value, cap))
+
+
+def get_performance_mode_params(mode: str) -> tuple:
+    """
+    根据性能模式返回 (quantization, max_image_long_edge)。
+
+    三种推理模式的具体区别：
+
+    - accurate_fast（准确快速）
+      量化: 无量化(none)，显存充足时可为 8bit/4bit（见 get_smart_performance_params）
+      长边: 4096
+      适用: 显存充足(建议≥16G)、长文档/大图、追求最高识别质量与速度
+      Token: 最低 4096，推荐 4096～8192
+
+    - accurate_save（准确省显存）
+      量化: 8bit
+      长边: 4096
+      适用: 显存有限、仍要高质量与长图支持，可接受较慢推理
+      Token: 2048～4096
+
+    - fast_save（快速省显存）
+      量化: 4bit
+      长边: 2048（大图会缩小，识别可能略差）
+      适用: 显存紧张、短文/小图、优先速度与占用
+      Token: 1024～2048，上限 2048 避免 OOM
+    """
+    modes = {
+        "accurate_fast": ("none", 4096),
+        "accurate_save": ("8bit", 4096),
+        "fast_save": ("4bit", 2048),
+    }
+    return modes.get(mode, ("none", 4096))
+
+
+def get_recommended_batch_concurrency() -> int:
+    """
+    根据当前显卡显存推荐批量并发数（供 API 服务端与客户端参考）。
+    无 CUDA 或异常时返回 1。8G 显存给 3 以利用富余显存。
+    """
+    if not torch.cuda.is_available():
+        return 1
+    try:
+        total_bytes = torch.cuda.get_device_properties(0).total_memory
+        total_gb = total_bytes / (1024 ** 3)
+        if total_gb >= 24:
+            return 4
+        if total_gb >= 16:
+            return 3
+        if total_gb >= 12:
+            return 3
+        if total_gb >= 7.0:
+            return 3   # 7G 及以上（含 8G 卡若系统报 7.x）给 3 并发
+        return 2
+    except Exception:
+        return 1
+
+
+def get_smart_performance_params(mode: str) -> tuple:
+    """
+    根据性能模式与当前显卡显存返回 (quantization, max_image_long_edge)。
+    仅对 accurate_fast 做智能调整，其余模式与 get_performance_mode_params 一致。
+    用于避免高显存模式下显存不足导致 OOM。
+    """
+    if mode != "accurate_fast":
+        return get_performance_mode_params(mode)
+    if not torch.cuda.is_available():
+        return "8bit", 4096
+    try:
+        total_bytes = torch.cuda.get_device_properties(0).total_memory
+        total_gb = total_bytes / (1024 ** 3)
+        if total_gb >= 24:
+            q, edge = "none", 4096
+        elif total_gb >= 16:
+            q, edge = "8bit", 4096
+        elif total_gb >= 12:
+            q, edge = "8bit", 4096
+        elif total_gb >= 7.0:
+            # 7G～8G（含多数 8G 卡若系统少报）用 8bit，避免误判为 4bit
+            q, edge = "8bit", 2048
+        else:
+            q, edge = "4bit", 2048
+        print(f"[推理模式] 显存 {total_gb:.1f} GB，accurate_fast 实际使用: {q} 量化, 长边 {edge}")
+        return q, edge
+    except Exception:
+        return "8bit", 4096
 
 
 class OCREngine:
     """OCR 引擎类"""
 
-    # 超过此尺寸的图片会在预处理时等比缩放，避免浪费内存
+    # 默认超过此尺寸的图片会在预处理时等比缩放（可由 performance_mode 覆盖）
     MAX_IMAGE_LONG_EDGE = 4096
 
     # dtype 配置值到实际类型的映射
@@ -28,7 +140,7 @@ class OCREngine:
 
     def __init__(self, model_path: str = "zai-org/GLM-OCR", device: str = "auto",
                  use_local_only: bool = False, quantization: str = "none",
-                 dtype: str = "float16"):
+                 dtype: str = "float16", max_image_long_edge: int = None):
         """
         初始化 OCR 引擎
 
@@ -38,12 +150,14 @@ class OCREngine:
             use_local_only: 是否仅使用本地模型，不连接 HuggingFace
             quantization: 量化模式 ("none", "8bit", "4bit")
             dtype: 模型精度 ("float16", "float32", "bfloat16", "auto")
+            max_image_long_edge: 图片长边上限（超过则等比缩放），None 则用类默认 4096
         """
         self.model_path = model_path
         self.device = device
         self.use_local_only = use_local_only
         self.quantization = quantization
         self.dtype = self.DTYPE_MAP.get(dtype, torch.float16)
+        self.max_image_long_edge = max_image_long_edge if max_image_long_edge is not None else self.MAX_IMAGE_LONG_EDGE
         self.processor = None
         self.model = None
         self._is_loaded = False
@@ -157,34 +271,46 @@ class OCREngine:
         import tempfile
         import os
 
+        opened_by_me = False
         if isinstance(image, Image.Image):
             pil_image = image
         else:
             pil_image = Image.open(str(image))
+            opened_by_me = True
 
-        w, h = pil_image.size
-        needs_temp = isinstance(image, Image.Image)
+        try:
+            w, h = pil_image.size
+            needs_temp = isinstance(image, Image.Image)
 
-        # 超大图片等比缩放
-        if max(w, h) > self.MAX_IMAGE_LONG_EDGE:
-            pil_image.thumbnail(
-                (self.MAX_IMAGE_LONG_EDGE, self.MAX_IMAGE_LONG_EDGE),
-                Image.LANCZOS
-            )
-            needs_temp = True
+            # 超大图片等比缩放
+            if max(w, h) > self.max_image_long_edge:
+                pil_image.thumbnail(
+                    (self.max_image_long_edge, self.max_image_long_edge),
+                    Image.LANCZOS
+                )
+                needs_temp = True
 
-        if needs_temp:
-            fd, temp_path = tempfile.mkstemp(suffix=".png", prefix="ocr_")
-            os.close(fd)
-            # 转为 RGB 避免 PNG 保存 RGBA 浪费空间
-            if pil_image.mode not in ("RGB", "L"):
-                pil_image = pil_image.convert("RGB")
-            pil_image.save(temp_path)
-            pil_image.close()
-            return temp_path, True
-        else:
-            pil_image.close()
-            return str(image), False
+            if needs_temp:
+                fd, temp_path = tempfile.mkstemp(suffix=".png", prefix="ocr_")
+                os.close(fd)
+                # 转为 RGB 避免 PNG 保存 RGBA 浪费空间
+                if pil_image.mode not in ("RGB", "L"):
+                    pil_image = pil_image.convert("RGB")
+                pil_image.save(temp_path)
+                if not opened_by_me:
+                    # 由调用方传入的 PIL Image，保存后即可关闭
+                    pil_image.close()
+                return temp_path, True
+            else:
+                # 非 PIL 输入且无需临时文件，由 finally 负责关闭
+                return str(image), False
+        finally:
+            # 由本函数打开的文件句柄，在任何路径（正常/异常）下都确保关闭
+            if opened_by_me:
+                try:
+                    pil_image.close()
+                except Exception:
+                    pass
 
     def recognize_image(
         self,
@@ -281,7 +407,9 @@ class OCREngine:
         images: List[Union[str, Path, Image.Image]],
         prompt: str = "Text Recognition:",
         max_new_tokens: int = 2048,
-        progress_callback=None
+        progress_callback=None,
+        stop_check: Optional[Callable[[], bool]] = None,
+        wait_if_paused: Optional[Callable[[], None]] = None
     ) -> List[Dict[str, Union[str, bool]]]:
         """
         批量识别图片
@@ -290,7 +418,9 @@ class OCREngine:
             images: 图片路径或对象列表
             prompt: 识别提示词
             max_new_tokens: 最大生成 token 数
-            progress_callback: 进度回调 callback(current: int, total: int, result: str)
+            progress_callback: 进度回调 (current, total, result_text_or_msg)
+            stop_check: 返回 True 时停止
+            wait_if_paused: 阻塞直到恢复或停止
 
         Returns:
             识别结果列表 [{"image": path, "text": result, "success": bool}, ...]
@@ -299,6 +429,12 @@ class OCREngine:
         total = len(images)
 
         for i, image in enumerate(images):
+            if stop_check and stop_check():
+                break
+            if wait_if_paused:
+                wait_if_paused()
+            if stop_check and stop_check():
+                break
             try:
                 image_path = str(image) if isinstance(image, (str, Path)) else "clipboard"
                 text = self.recognize_image(image, prompt, max_new_tokens)
