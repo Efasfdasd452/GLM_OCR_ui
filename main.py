@@ -14,22 +14,42 @@ import threading
 # 无控制台时将日志写入程序目录下的 glm_ocr.log，方便排查问题
 def _fix_stdio():
     import io
+    import json
+
+    def _read_stealth_mode() -> bool:
+        """从 config.json 中快速读取无痕模式开关，失败时返回 False。"""
+        try:
+            if getattr(sys, 'frozen', False):
+                cfg_path = Path(sys.executable).parent / "config.json"
+            else:
+                cfg_path = Path(__file__).parent / "config.json"
+            with open(cfg_path, 'r', encoding='utf-8') as _f:
+                _cfg = json.load(_f)
+            return bool(_cfg.get('ui', {}).get('stealth_mode', False))
+        except Exception:
+            return False
+
+    stealth_mode = _read_stealth_mode()
 
     # 判断是否需要重定向（stdout 为 None 说明没有控制台）
     needs_redirect = sys.stdout is None or sys.stderr is None
 
     if needs_redirect:
-        # 确定日志文件路径：EXE 同目录
-        if getattr(sys, 'frozen', False):
-            log_dir = Path(sys.executable).parent
-        else:
-            log_dir = Path(__file__).parent
-        log_path = log_dir / "glm_ocr.log"
-
-        try:
-            log_file = open(log_path, 'a', encoding='utf-8', buffering=1)
-        except OSError:
+        if stealth_mode:
+            # 无痕模式：输出到 devnull，不在磁盘留下日志文件
             log_file = open(os.devnull, 'w', encoding='utf-8')
+        else:
+            # 确定日志文件路径：EXE 同目录
+            if getattr(sys, 'frozen', False):
+                log_dir = Path(sys.executable).parent
+            else:
+                log_dir = Path(__file__).parent
+            log_path = log_dir / "glm_ocr.log"
+
+            try:
+                log_file = open(log_path, 'a', encoding='utf-8', buffering=1)
+            except OSError:
+                log_file = open(os.devnull, 'w', encoding='utf-8')
 
         if sys.stdout is None:
             sys.stdout = log_file

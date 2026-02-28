@@ -90,6 +90,12 @@ class MainWindow(ctk.CTk):
         self._unload_anim_id = None
         self._unload_anim_frame = 0
 
+        # 剪贴板监听状态
+        self._clipboard_monitor_active = False
+        self._clipboard_monitor_thread = None
+        self._last_clipboard_image_hash = None
+        self._clipboard_ocr_running = False
+
         # 绑定快捷键
         self.bind_shortcuts()
 
@@ -100,6 +106,10 @@ class MainWindow(ctk.CTk):
         icon_path = self.base_dir / "icon.ico"
         self.tray_manager = TrayManager(self, str(icon_path))
         self.tray_manager.start()
+
+        # 若配置中已开启剪贴板监听，延迟 800ms 启动（等 UI 完全就绪）
+        if self.config.get("ui.clipboard_monitor", False):
+            self.after(800, self._start_clipboard_monitor)
 
         # 同步 API 状态到托盘
         if self.api_manager and self.api_manager.is_running():
@@ -1024,6 +1034,8 @@ class MainWindow(ctk.CTk):
 
     def quit_app(self):
         """完全退出程序"""
+        # 停止剪贴板监听
+        self._stop_clipboard_monitor()
         # 取消 API 状态轮询
         if self._api_poll_id:
             self.after_cancel(self._api_poll_id)
@@ -1736,14 +1748,21 @@ class MainWindow(ctk.CTk):
                 output_parts = []
 
                 if is_qrcode_mode:
-                    # 二维码识别模式
-                    self.log("正在扫描二维码...")
+                    # 扫码识别模式（支持二维码和条形码）
+                    self.log("正在扫描二维码/条形码...")
                     qr_results = QRCodeUtils.decode_qrcodes(image)
                     qr_text = QRCodeUtils.format_results(qr_results)
 
                     if qr_text:
                         output_parts.append(qr_text)
-                        self.log(f"✓ 检测到 {len(qr_results)} 个二维码")
+                        qr_count = sum(1 for r in qr_results if r['type'] == 'QRCODE')
+                        bar_count = len(qr_results) - qr_count
+                        parts = []
+                        if qr_count:
+                            parts.append(f"{qr_count} 个二维码")
+                        if bar_count:
+                            parts.append(f"{bar_count} 个条形码")
+                        self.log(f"✓ 检测到 {'、'.join(parts)}")
 
                     # 如果模型已加载，同时进行 OCR 识别（处理混合图片）
                     if self.model_loaded and self.ocr_service:
@@ -1762,8 +1781,8 @@ class MainWindow(ctk.CTk):
                         self.log("✓ 识别完成")
                     else:
                         self.after(0, lambda: self._show_result(""))
-                        self.log("✗ 未检测到二维码或文字")
-                        messagebox.showinfo("提示", "未检测到二维码")
+                        self.log("✗ 未检测到二维码、条形码或文字")
+                        messagebox.showinfo("提示", "未检测到二维码或条形码")
                 else:
                     # 常规 OCR 模式
                     prompt = selected_prompt
@@ -2338,79 +2357,64 @@ class MainWindow(ctk.CTk):
             ToastNotification.show(self, "✗ Invalid number", duration=2000)
 
     def open_settings(self):
-        """打开设置窗口，包含语言、字体、输出目录、API 配置等选项。"""
+        """打开设置窗口（界面 / 模型 / 服务 三个分组标签页）"""
         settings_win = ctk.CTkToplevel(self)
         settings_win.title(self.lang.get("settings_title"))
-        settings_win.geometry("580x1040")
+        settings_win.geometry("610x650")
         settings_win.resizable(False, False)
         settings_win.grab_set()
 
         # 居中显示
         settings_win.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 580) // 2
-        y = self.winfo_y() + (self.winfo_height() - 980) // 2
+        x = self.winfo_x() + (self.winfo_width() - 610) // 2
+        y = self.winfo_y() + (self.winfo_height() - 650) // 2
         settings_win.geometry(f"+{x}+{y}")
 
-        # 标题
-        title_label = ctk.CTkLabel(
-            settings_win,
-            text=self.lang.get("settings"),
-            font=("Microsoft YaHei UI", 20, "bold")
-        )
-        title_label.grid(row=0, column=0, columnspan=3, pady=(20, 10))
+        settings_win.grid_columnconfigure(0, weight=1)
+        settings_win.grid_rowconfigure(0, weight=1)
 
-        # 提示文本
-        hint_label = ctk.CTkLabel(
-            settings_win,
-            text=self.lang.get("auto_save_hint"),
-            font=("Microsoft YaHei UI", 11),
-            text_color="gray"
-        )
-        hint_label.grid(row=1, column=0, columnspan=3, pady=(0, 15))
+        # 分组标签页
+        tabview = ctk.CTkTabview(settings_win, width=590, height=575)
+        tabview.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
 
-        # ========== 语言设置 ==========
-        ctk.CTkLabel(settings_win, text=self.lang.get("interface_language"), font=("Microsoft YaHei UI", 14)).grid(
-            row=2, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
+        tab_ui      = tabview.add("🖥  界面")
+        tab_model   = tabview.add("⚙️  模型")
+        tab_service = tabview.add("🔌  服务")
 
+        for tab in (tab_ui, tab_model, tab_service):
+            tab.grid_columnconfigure(0, weight=0)
+            tab.grid_columnconfigure(1, weight=1)
+
+        # 通用常量
+        _LBL_KW  = dict(font=("Microsoft YaHei UI", 13), anchor="w")
+        _LBL_PAD = (20, 10)
+        _RPY     = dict(pady=10)
+
+        # ============================================================
+        # TAB 1: 界面
+        # ============================================================
+        r = 0
+
+        # ---- 语言 ----
+        ctk.CTkLabel(tab_ui, text=self.lang.get("interface_language"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
         language_options = [
-            "简体中文",
-            "繁體中文（香港）",
-            "繁體中文（台灣）",
-            "English",
-            "Français",
-            "Deutsch",
-            "日本語",
-            "Italiano",
-            "Русский"
+            "简体中文", "繁體中文（香港）", "繁體中文（台灣）", "English",
+            "Français", "Deutsch", "日本語", "Italiano", "Русский"
         ]
-
         language_var = ctk.StringVar(settings_win, value=self.config.get("ui.language", "简体中文"))
-        language_menu = ctk.CTkOptionMenu(
+        ctk.CTkOptionMenu(
+            tab_ui, variable=language_var, values=language_options,
+            width=250, font=("Microsoft YaHei UI", 12),
+            command=lambda c: self._save_language(c, settings_win)
+        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
 
-            settings_win,
-            variable=language_var,
-            values=language_options,
-            width=250,
-            font=("Microsoft YaHei UI", 12),
-            command=lambda choice: self._save_language(choice, settings_win)
-        )
-        language_menu.grid(row=2, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
-        # ========== 字体设置 ==========
-        ctk.CTkLabel(settings_win, text=self.lang.get("font_family"), font=("Microsoft YaHei UI", 14)).grid(
-            row=3, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        font_options = [
-            "Microsoft YaHei UI",
-            "SimSun",
-            "SimHei",
-            "KaiTi",
-            "FangSong",
-            "Arial",
-            "Consolas",
-        ]
+        # ---- 字体 ----
+        ctk.CTkLabel(tab_ui, text=self.lang.get("font_family"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        font_options = ["Microsoft YaHei UI", "SimSun", "SimHei", "KaiTi",
+                        "FangSong", "Arial", "Consolas"]
         font_family_var = ctk.StringVar(settings_win, value=self.font_family)
 
         def on_font_family_change(choice):
@@ -2418,46 +2422,22 @@ class MainWindow(ctk.CTk):
             self.config.set("ui.font_family", choice)
             self.config.save_config()
             self.apply_font_settings()
-            toast_text = self.lang.get("toast_font_saved")
-            ToastNotification.show(settings_win, f"{toast_text} {choice}", duration=1500)
+            ToastNotification.show(settings_win,
+                f"{self.lang.get('toast_font_saved')} {choice}", duration=1500)
             self.log(f"字体已设置为: {choice}")
 
         ctk.CTkOptionMenu(
-            settings_win,
-            variable=font_family_var,
-            values=font_options,
-            width=250,
-            font=("Microsoft YaHei UI", 12),
-            command=on_font_family_change
-        ).grid(row=3, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+            tab_ui, variable=font_family_var, values=font_options,
+            width=250, font=("Microsoft YaHei UI", 12), command=on_font_family_change
+        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
 
-        # ========== 字体大小设置 ==========
-        ctk.CTkLabel(settings_win, text=self.lang.get("font_size_label"), font=("Microsoft YaHei UI", 14)).grid(
-            row=4, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        font_size_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        font_size_frame.grid(row=4, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
+        # ---- 字体大小 ----
+        ctk.CTkLabel(tab_ui, text=self.lang.get("font_size_label"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        font_size_frame = ctk.CTkFrame(tab_ui, fg_color="transparent")
+        font_size_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
         font_size_var = ctk.StringVar(settings_win, value=str(self.font_size))
-
-        font_size_slider = ctk.CTkSlider(
-            font_size_frame,
-            from_=10,
-            to=20,
-            number_of_steps=10,
-            width=180,
-            command=lambda val: _on_font_size_change(int(val))
-        )
-        font_size_slider.set(self.font_size)
-        font_size_slider.pack(side="left", padx=(0, 8))
-
-        font_size_entry = ctk.CTkEntry(font_size_frame, textvariable=font_size_var, width=60, justify="center")
-        font_size_entry.pack(side="left", padx=(0, 5))
-
-        ctk.CTkLabel(font_size_frame, text="(10-20)", font=("Microsoft YaHei UI", 11), text_color="gray").pack(
-            side="left", padx=5
-        )
 
         def _on_font_size_change(val):
             val = max(10, min(20, val))
@@ -2467,27 +2447,183 @@ class MainWindow(ctk.CTk):
             self.config.set("ui.font_size", val)
             self.config.save_config()
             self.apply_font_settings()
-            toast_text = self.lang.get("toast_font_saved")
-            ToastNotification.show(settings_win, f"{toast_text} {val}px", duration=1500)
+            ToastNotification.show(settings_win,
+                f"{self.lang.get('toast_font_saved')} {val}px", duration=1500)
 
-        def _on_font_size_entry():
+        def _on_font_size_entry(*_):
             try:
-                val = int(font_size_var.get().strip())
-                _on_font_size_change(val)
+                _on_font_size_change(int(font_size_var.get().strip()))
             except ValueError:
                 font_size_var.set(str(self.font_size))
 
+        font_size_slider = ctk.CTkSlider(
+            font_size_frame, from_=10, to=20, number_of_steps=10,
+            width=160, command=lambda v: _on_font_size_change(int(v)))
+        font_size_slider.set(self.font_size)
+        font_size_slider.pack(side="left", padx=(0, 6))
+
+        font_size_entry = ctk.CTkEntry(font_size_frame, textvariable=font_size_var,
+                                       width=55, justify="center")
+        font_size_entry.pack(side="left", padx=(0, 4))
         font_size_entry.bind("<Return>", _on_font_size_entry)
         font_size_entry.bind("<FocusOut>", _on_font_size_entry)
+        ctk.CTkLabel(font_size_frame, text="(10-20)",
+                     font=("Microsoft YaHei UI", 10), text_color="gray").pack(side="left")
+        r += 1
 
-        # ========== 输出目录设置 ==========
-        ctk.CTkLabel(settings_win, text=self.lang.get("output_directory"), font=("Microsoft YaHei UI", 14)).grid(
-            row=5, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
+        # ---- 截图提示 ----
+        ctk.CTkLabel(tab_ui, text=self.lang.get("screenshot_prompt"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        screenshot_reminder_var = ctk.BooleanVar(
+            settings_win, value=not self.config.get("ui.screenshot_reminder_disabled", False))
 
-        output_dir_var = ctk.StringVar(settings_win, value=self.config.get("batch.output_dir", "./output"))
-        output_dir_entry = ctk.CTkEntry(settings_win, textvariable=output_dir_var, width=250)
-        output_dir_entry.grid(row=5, column=1, padx=10, pady=12)
+        def save_screenshot_reminder():
+            self.config.set("ui.screenshot_reminder_disabled", not screenshot_reminder_var.get())
+            self.config.save_config()
+            toast = self.lang.get(
+                "toast_screenshot_enabled" if screenshot_reminder_var.get()
+                else "toast_screenshot_disabled")
+            ToastNotification.show(settings_win, toast, duration=1500)
+            self.log(f"截图提示已{'启用' if screenshot_reminder_var.get() else '禁用'}")
+
+        ctk.CTkCheckBox(tab_ui, text=self.lang.get("show_screenshot_success"),
+                        variable=screenshot_reminder_var,
+                        command=save_screenshot_reminder
+                        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
+
+        # ---- 公式修复提示 ----
+        ctk.CTkLabel(tab_ui, text="公式修复提示:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        formula_completion_var = ctk.BooleanVar(
+            settings_win,
+            value=not self.config.get("ui.fix_formula_completion_reminder_disabled", False))
+
+        def save_formula_completion_reminder():
+            self.config.set("ui.fix_formula_completion_reminder_disabled",
+                            not formula_completion_var.get())
+            self.config.save_config()
+            toast = ("✓ 公式修复完成提示已启用" if formula_completion_var.get()
+                     else "✓ 公式修复完成提示已禁用")
+            ToastNotification.show(settings_win, toast, duration=1500)
+            self.log(f"公式修复完成提示已{'启用' if formula_completion_var.get() else '禁用'}")
+
+        ctk.CTkCheckBox(tab_ui, text="显示公式修复完成提示",
+                        variable=formula_completion_var,
+                        command=save_formula_completion_reminder
+                        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
+
+        # ---- 关闭行为 ----
+        ctk.CTkLabel(tab_ui, text="关闭行为:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        close_behavior_frame = ctk.CTkFrame(tab_ui, fg_color="transparent")
+        close_behavior_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        current_choice = self.config.get("ui.minimize_to_tray", None)
+        if current_choice is True:
+            choice_text = "最小化到托盘"
+        elif current_choice is False:
+            choice_text = "直接退出"
+        else:
+            choice_text = "每次询问"
+        close_choice_label = ctk.CTkLabel(close_behavior_frame,
+                                          text=f"当前: {choice_text}",
+                                          font=("Microsoft YaHei UI", 12))
+        close_choice_label.pack(side="left", padx=(0, 10))
+
+        def reset_close_behavior():
+            self.config.set("ui.minimize_to_tray", None)
+            self.config.save_config()
+            close_choice_label.configure(text="当前: 每次询问")
+            ToastNotification.show(settings_win, "✓ 已重置，下次关闭时将重新询问", duration=1500)
+            self.log("关闭行为已重置为每次询问")
+
+        ctk.CTkButton(close_behavior_frame, text="重置", command=reset_close_behavior,
+                      width=60, height=28).pack(side="left", padx=5)
+        r += 1
+
+        # ---- 监听剪贴板 ----
+        ctk.CTkLabel(tab_ui, text="监听剪贴板:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        clipboard_monitor_frame = ctk.CTkFrame(tab_ui, fg_color="transparent")
+        clipboard_monitor_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        clipboard_monitor_var = ctk.BooleanVar(
+            settings_win, value=self.config.get("ui.clipboard_monitor", False))
+        auto_copy_var = ctk.BooleanVar(
+            settings_win, value=self.config.get("ui.clipboard_monitor_auto_copy", False))
+
+        def on_clipboard_monitor_toggle():
+            enabled = clipboard_monitor_var.get()
+            self.config.set("ui.clipboard_monitor", enabled)
+            self.config.save_config()
+            if enabled:
+                self._start_clipboard_monitor()
+                ToastNotification.show(settings_win, "✓ 剪贴板监听已启动", duration=1500)
+            else:
+                self._stop_clipboard_monitor()
+                ToastNotification.show(settings_win, "✓ 剪贴板监听已停止", duration=1500)
+
+        def on_auto_copy_toggle():
+            self.config.set("ui.clipboard_monitor_auto_copy", auto_copy_var.get())
+            self.config.save_config()
+
+        ctk.CTkCheckBox(clipboard_monitor_frame, text="自动识别剪贴板图片",
+                        variable=clipboard_monitor_var,
+                        command=on_clipboard_monitor_toggle
+                        ).pack(side="left", padx=(0, 12))
+        ctk.CTkCheckBox(clipboard_monitor_frame, text="结果自动复制",
+                        variable=auto_copy_var, command=on_auto_copy_toggle
+                        ).pack(side="left")
+        r += 1
+
+        # ---- 无痕模式 ----
+        ctk.CTkLabel(tab_ui, text="无痕模式:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        stealth_frame = ctk.CTkFrame(tab_ui, fg_color="transparent")
+        stealth_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        stealth_var = ctk.BooleanVar(settings_win, value=self.config.get("ui.stealth_mode", False))
+
+        def on_stealth_toggle():
+            enabled = stealth_var.get()
+            self.config.set("ui.stealth_mode", enabled)
+            self.config.save_config()
+            if enabled:
+                import sys as _sys, os as _os
+                _null = open(_os.devnull, 'w', encoding='utf-8')
+                if _sys.stdout is not None:
+                    try: _sys.stdout.flush()
+                    except Exception: pass
+                    _sys.stdout = _null
+                if _sys.stderr is not None:
+                    try: _sys.stderr.flush()
+                    except Exception: pass
+                    _sys.stderr = _null
+                ToastNotification.show(settings_win, "✓ 无痕模式已开启，日志已静默", duration=1800)
+            else:
+                ToastNotification.show(
+                    settings_win, "✓ 已关闭无痕模式，重启后恢复写入日志", duration=2000)
+
+        ctk.CTkCheckBox(stealth_frame, text="不在本地磁盘留下运行日志",
+                        variable=stealth_var, command=on_stealth_toggle
+                        ).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(stealth_frame, text="（关闭需重启生效）",
+                     font=("Microsoft YaHei UI", 10), text_color="gray"
+                     ).pack(side="left")
+
+        # ============================================================
+        # TAB 2: 模型
+        # ============================================================
+        r = 0
+
+        # ---- 输出目录 ----
+        ctk.CTkLabel(tab_model, text=self.lang.get("output_directory"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        out_frame = ctk.CTkFrame(tab_model, fg_color="transparent")
+        out_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        output_dir_var = ctk.StringVar(settings_win,
+                                       value=self.config.get("batch.output_dir", "./output"))
+        output_dir_entry = ctk.CTkEntry(out_frame, textvariable=output_dir_var, width=200)
+        output_dir_entry.pack(side="left", padx=(0, 5))
 
         def browse_output_dir():
             folder = filedialog.askdirectory(title="选择输出目录", parent=settings_win)
@@ -2495,310 +2631,182 @@ class MainWindow(ctk.CTk):
                 output_dir_var.set(folder)
                 self.config.set("batch.output_dir", folder)
                 self.config.save_config()
-                toast_text = self.lang.get("toast_output_dir_saved")
-                ToastNotification.show(settings_win, toast_text, duration=1500)
+                ToastNotification.show(settings_win,
+                    self.lang.get("toast_output_dir_saved"), duration=1500)
                 self.log(f"输出目录已设置为: {folder}")
 
-        ctk.CTkButton(settings_win, text=self.lang.get("browse"), command=browse_output_dir, width=70).grid(
-            row=5, column=2, padx=10, pady=12
-        )
+        ctk.CTkButton(out_frame, text=self.lang.get("browse"),
+                      command=browse_output_dir, width=60, height=28).pack(side="left")
+        r += 1
 
-        # ========== 推理模式设置 ==========
+        # ---- 推理模式 ----
+        ctk.CTkLabel(tab_model, text=self.lang.get("performance_mode_label"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
         perf_mode_keys = ["high_quality", "balanced", "memory_save"]
         perf_mode_displays = [
             self.lang.get("performance_mode_high_quality"),
             self.lang.get("performance_mode_balanced"),
             self.lang.get("performance_mode_memory_save"),
         ]
-        current_perf = normalize_performance_mode(self.config.get("model.performance_mode", "balanced"))
-        current_perf_index = perf_mode_keys.index(current_perf) if current_perf in perf_mode_keys else 1
-
-        ctk.CTkLabel(settings_win, text=self.lang.get("performance_mode_label"), font=("Microsoft YaHei UI", 14)).grid(
-            row=6, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-        performance_mode_var = ctk.StringVar(settings_win, value=perf_mode_displays[current_perf_index])
+        current_perf = normalize_performance_mode(
+            self.config.get("model.performance_mode", "balanced"))
+        current_perf_index = (perf_mode_keys.index(current_perf)
+                              if current_perf in perf_mode_keys else 1)
+        performance_mode_var = ctk.StringVar(
+            settings_win, value=perf_mode_displays[current_perf_index])
 
         def on_performance_mode_change(choice):
             idx = perf_mode_displays.index(choice) if choice in perf_mode_displays else 0
-            key = perf_mode_keys[idx]
-            self.config.set("model.performance_mode", key)
+            self.config.set("model.performance_mode", perf_mode_keys[idx])
             self.config.save_config()
             self._refresh_token_ui_for_mode()
-            ToastNotification.show(
-                settings_win,
-                f"{self.lang.get('performance_mode_reload_hint')}",
-                duration=2500
-            )
+            ToastNotification.show(settings_win,
+                self.lang.get("performance_mode_reload_hint"), duration=2500)
             self.log(f"推理模式已设置为: {choice}（需重新加载模型生效）")
 
-        perf_mode_menu = ctk.CTkOptionMenu(
-            settings_win,
-            variable=performance_mode_var,
-            values=perf_mode_displays,
-            width=280,
-            font=("Microsoft YaHei UI", 12),
+        ctk.CTkOptionMenu(
+            tab_model, variable=performance_mode_var, values=perf_mode_displays,
+            width=280, font=("Microsoft YaHei UI", 12),
             command=on_performance_mode_change
-        )
-        perf_mode_menu.grid(row=6, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-        ctk.CTkLabel(
-            settings_win,
-            text=self.lang.get("performance_mode_reload_hint"),
-            font=("Microsoft YaHei UI", 11),
-            text_color="gray"
-        ).grid(row=7, column=0, columnspan=3, padx=(40, 10), pady=(0, 4), sticky="w")
-        ctk.CTkLabel(
-            settings_win,
-            text=self.lang.get("performance_mode_token_hint"),
-            font=("Microsoft YaHei UI", 10),
-            text_color="gray"
-        ).grid(row=8, column=0, columnspan=3, padx=(40, 10), pady=(0, 12), sticky="w")
+        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
 
-        # ========== 最大 Token 限制设置 ==========
-        ctk.CTkLabel(settings_win, text=self.lang.get("max_token_limit"), font=("Microsoft YaHei UI", 14)).grid(
-            row=9, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
+        ctk.CTkLabel(tab_model, text=self.lang.get("performance_mode_reload_hint"),
+                     font=("Microsoft YaHei UI", 10), text_color="gray"
+                     ).grid(row=r, column=0, columnspan=2, padx=(20, 10), pady=(0, 2), sticky="w")
+        r += 1
+        ctk.CTkLabel(tab_model, text=self.lang.get("performance_mode_token_hint"),
+                     font=("Microsoft YaHei UI", 10), text_color="gray"
+                     ).grid(row=r, column=0, columnspan=2, padx=(20, 10), pady=(0, 8), sticky="w")
+        r += 1
 
-        max_tokens_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        max_tokens_frame.grid(row=9, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
-        max_tokens_entry = ctk.CTkEntry(max_tokens_frame, width=120)
+        # ---- 最大 Token 限制 ----
+        ctk.CTkLabel(tab_model, text=self.lang.get("max_token_limit"), **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        max_tokens_frame = ctk.CTkFrame(tab_model, fg_color="transparent")
+        max_tokens_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        max_tokens_entry = ctk.CTkEntry(max_tokens_frame, width=100)
         max_tokens_entry.insert(0, str(self.config.get("model.max_new_tokens_limit", 8192)))
         max_tokens_entry.pack(side="left", padx=(0, 5))
 
         def confirm_max_tokens():
             try:
                 new_value = int(max_tokens_entry.get().strip())
-                if new_value < 512:
-                    new_value = 512
-                    ToastNotification.show(settings_win, "⚠ 最小值为 512，已自动调整", duration=1500)
-                elif new_value > 32768:
-                    new_value = 32768
-                    ToastNotification.show(settings_win, "⚠ 最大值为 32768，已自动调整", duration=1500)
-
+                new_value = max(512, min(32768, new_value))
                 max_tokens_entry.delete(0, "end")
                 max_tokens_entry.insert(0, str(new_value))
-
                 self.config.set("model.max_new_tokens_limit", new_value)
                 self.config.save_config()
                 self._refresh_token_ui_for_mode()
-
-                toast_text = self.lang.get("toast_token_saved")
-                ToastNotification.show(settings_win, f"{toast_text} {new_value}", duration=1500)
+                ToastNotification.show(settings_win,
+                    f"{self.lang.get('toast_token_saved')} {new_value}", duration=1500)
                 self.log(f"最大 Token 限制已设置为: {new_value}")
             except ValueError:
                 ToastNotification.show(settings_win, "⚠ 请输入有效数字", duration=1500)
 
         max_tokens_entry.bind("<Return>", lambda e: confirm_max_tokens())
+        ctk.CTkButton(max_tokens_frame, text="确认", command=confirm_max_tokens,
+                      width=55, height=28).pack(side="left", padx=5)
+        ctk.CTkLabel(max_tokens_frame, text="(512-32768)",
+                     font=("Microsoft YaHei UI", 10), text_color="gray"
+                     ).pack(side="left", padx=4)
 
-        ctk.CTkButton(
-            max_tokens_frame, text="确认", command=confirm_max_tokens, width=60, height=28
-        ).pack(side="left", padx=5)
+        # ============================================================
+        # TAB 3: 服务
+        # ============================================================
+        r = 0
 
-        ctk.CTkLabel(
-            max_tokens_frame,
-            text="(512-32768)",
-            font=("Microsoft YaHei UI", 11),
-            text_color="gray"
-        ).pack(side="left", padx=5)
-
-        # ========== 截图提示设置 ==========
-        ctk.CTkLabel(settings_win, text=self.lang.get("screenshot_prompt"), font=("Microsoft YaHei UI", 14)).grid(
-            row=10, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        screenshot_reminder_var = ctk.BooleanVar(
-            settings_win,
-            value=not self.config.get("ui.screenshot_reminder_disabled", False)
-        )
-
-        def save_screenshot_reminder():
-            self.config.set("ui.screenshot_reminder_disabled", not screenshot_reminder_var.get())
-            self.config.save_config()
-            if screenshot_reminder_var.get():
-                toast_text = self.lang.get("toast_screenshot_enabled")
-            else:
-                toast_text = self.lang.get("toast_screenshot_disabled")
-            ToastNotification.show(settings_win, toast_text, duration=1500)
-            self.log(f"截图提示已{'启用' if screenshot_reminder_var.get() else '禁用'}")
-
-        screenshot_reminder_checkbox = ctk.CTkCheckBox(
-            settings_win,
-            text=self.lang.get("show_screenshot_success"),
-            variable=screenshot_reminder_var,
-            command=save_screenshot_reminder
-        )
-        screenshot_reminder_checkbox.grid(row=10, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
-        # ========== 公式修复完成提示设置 ==========
-        ctk.CTkLabel(settings_win, text="公式修复提示:", font=("Microsoft YaHei UI", 14)).grid(
-            row=11, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        formula_completion_var = ctk.BooleanVar(
-            settings_win,
-            value=not self.config.get("ui.fix_formula_completion_reminder_disabled", False)
-        )
-
-        def save_formula_completion_reminder():
-            self.config.set("ui.fix_formula_completion_reminder_disabled", not formula_completion_var.get())
-            self.config.save_config()
-            if formula_completion_var.get():
-                toast_text = "✓ 公式修复完成提示已启用"
-            else:
-                toast_text = "✓ 公式修复完成提示已禁用"
-            ToastNotification.show(settings_win, toast_text, duration=1500)
-            self.log(f"公式修复完成提示已{'启用' if formula_completion_var.get() else '禁用'}")
-
-        formula_completion_checkbox = ctk.CTkCheckBox(
-            settings_win,
-            text="显示公式修复完成提示",
-            variable=formula_completion_var,
-            command=save_formula_completion_reminder
-        )
-        formula_completion_checkbox.grid(row=11, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
-        # ========== API 客户端模式设置 ==========
-        ctk.CTkLabel(settings_win, text="客户端模式", font=("Microsoft YaHei UI", 14)).grid(
-            row=12, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
+        # ---- 客户端模式 ----
+        ctk.CTkLabel(tab_service, text="客户端模式:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
         api_mode_var = ctk.StringVar(settings_win, value=self.config.get("api.mode", "local"))
 
-        def on_mode_change(mode):
-            self.config.set("api.mode", mode)
-            self.config.save_config()
-            # 根据模式显示/隐藏远程 URL 框
-            if mode == "remote":
-                remote_frame.grid(row=13, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
-            else:
-                remote_frame.grid_forget()
-            # 重新初始化服务
-            self._init_ocr_service()
-            self.log(f"客户端模式已切换为: {mode}")
-
-        ctk.CTkOptionMenu(
-            settings_win,
-            variable=api_mode_var,
-            values=["local", "remote"],
-            command=on_mode_change,
-            width=200
-        ).grid(row=12, column=1, padx=10, pady=12, sticky="w")
-
-        # 远程地址配置框（仅远程模式显示）
-        remote_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-
-        # IP 地址
+        # 远程地址配置框（先建，on_mode_change 引用）
+        remote_frame = ctk.CTkFrame(tab_service, fg_color="transparent")
         ctk.CTkLabel(remote_frame, text="IP:", font=("Microsoft YaHei UI", 12)).grid(
-            row=0, column=0, padx=(0, 5), sticky="w"
-        )
-        remote_ip_entry = ctk.CTkEntry(remote_frame, width=200,
-                                        placeholder_text="例: 192.168.1.100 或 ::1")
+            row=0, column=0, padx=(0, 5), sticky="w")
+        remote_ip_entry = ctk.CTkEntry(remote_frame, width=180,
+                                       placeholder_text="例: 192.168.1.100")
         remote_ip_entry.insert(0, self.config.get("api.remote_host", "127.0.0.1"))
         remote_ip_entry.grid(row=0, column=1, padx=5)
-
-        remote_ip_hint = ctk.CTkLabel(remote_frame, text="", font=("Microsoft YaHei UI", 10),
-                                       text_color="gray")
+        remote_ip_hint = ctk.CTkLabel(remote_frame, text="",
+                                       font=("Microsoft YaHei UI", 10), text_color="gray")
         remote_ip_hint.grid(row=1, column=1, padx=5, sticky="w")
-
-        # 端口
         ctk.CTkLabel(remote_frame, text="端口:", font=("Microsoft YaHei UI", 12)).grid(
-            row=0, column=2, padx=(15, 5), sticky="w"
-        )
-        remote_port_entry = ctk.CTkEntry(remote_frame, width=80, placeholder_text="8000")
-        remote_port_entry.insert(0, str(self.config.get("api.remote_port",
-                                        self.config.get("api.port", 8000))))
+            row=0, column=2, padx=(12, 5), sticky="w")
+        remote_port_entry = ctk.CTkEntry(remote_frame, width=75, placeholder_text="8000")
+        remote_port_entry.insert(0, str(self.config.get(
+            "api.remote_port", self.config.get("api.port", 8000))))
         remote_port_entry.grid(row=0, column=3, padx=5)
 
-        # 校验函数
         def _validate_ip(ip_str: str) -> tuple:
-            """校验 IPv4/IPv6 地址，返回 (valid, type_str)"""
-            import ipaddress
+            import ipaddress, re
             ip_str = ip_str.strip()
             if not ip_str:
                 return False, "不能为空"
-            # 也允许域名（比如 localhost）
             if ip_str.lower() == "localhost":
                 return True, "localhost"
             try:
                 addr = ipaddress.ip_address(ip_str)
-                if addr.version == 4:
-                    return True, "IPv4"
-                else:
-                    return True, "IPv6"
+                return True, "IPv4" if addr.version == 4 else "IPv6"
             except ValueError:
-                # 尝试当作域名
-                import re
-                domain_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$'
-                if re.match(domain_pattern, ip_str):
+                if re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$',
+                            ip_str):
                     return True, "域名"
                 return False, "无效地址"
 
         def _validate_port(port_str: str) -> tuple:
-            """校验端口号，返回 (valid, msg)"""
             port_str = port_str.strip()
             if not port_str:
                 return False, "不能为空"
             try:
                 port = int(port_str)
-                if port < 1 or port > 65535:
-                    return False, "范围 1-65535"
-                return True, str(port)
+                return (True, str(port)) if 1 <= port <= 65535 else (False, "范围 1-65535")
             except ValueError:
                 return False, "必须为数字"
 
-        # 实时 IP 校验提示
         def on_ip_input(*_):
             ip = remote_ip_entry.get()
             if not ip.strip():
                 remote_ip_hint.configure(text="", text_color="gray")
                 return
             valid, info = _validate_ip(ip)
-            if valid:
-                remote_ip_hint.configure(text=f"✓ {info}", text_color="green")
-            else:
-                remote_ip_hint.configure(text=f"✗ {info}", text_color="red")
+            remote_ip_hint.configure(
+                text=f"✓ {info}" if valid else f"✗ {info}",
+                text_color="green" if valid else "red")
 
         remote_ip_entry.bind("<KeyRelease>", on_ip_input)
-        # 初始显示
         on_ip_input()
 
-        # 按钮区
         btn_row_frame = ctk.CTkFrame(remote_frame, fg_color="transparent")
         btn_row_frame.grid(row=2, column=0, columnspan=4, pady=(5, 0), sticky="w")
 
         def save_remote_address():
             ip = remote_ip_entry.get().strip()
             port_str = remote_port_entry.get().strip()
-
             ip_valid, ip_info = _validate_ip(ip)
             if not ip_valid:
                 ToastNotification.show(settings_win, f"⚠ IP 地址无效: {ip_info}", duration=2000)
                 return
-
             port_valid, port_info = _validate_port(port_str)
             if not port_valid:
                 ToastNotification.show(settings_win, f"⚠ 端口无效: {port_info}", duration=2000)
                 return
-
             port = int(port_str)
-            # IPv6 地址需要方括号
             bracket_ip = f"[{ip}]" if ":" in ip else ip
             url = f"http://{bracket_ip}:{port}"
-
             self.config.set("api.remote_host", ip)
             self.config.set("api.remote_port", port)
             self.config.set("api.remote_url", url)
             self.config.save_config()
-
             self._init_ocr_service()
             ToastNotification.show(settings_win, f"✓ 远程地址已保存: {url}", duration=1500)
             self.log(f"远程地址已设置为: {url}")
 
         ctk.CTkButton(btn_row_frame, text="保存", command=save_remote_address,
-                       width=60, height=28).pack(side="left", padx=(0, 5))
+                      width=60, height=28).pack(side="left", padx=(0, 5))
 
         def test_connection():
-            # 先保存再测试
             save_remote_address()
             if self.ocr_service and isinstance(self.ocr_service, RemoteOCRService):
                 success, message = self.ocr_service.test_connection()
@@ -2810,34 +2818,46 @@ class MainWindow(ctk.CTk):
                 messagebox.showwarning("提示", "请先切换到远程模式并保存", parent=settings_win)
 
         ctk.CTkButton(btn_row_frame, text="测试连接", command=test_connection,
-                       width=80, height=28).pack(side="left", padx=5)
+                      width=80, height=28).pack(side="left", padx=5)
 
-        # 根据当前模式决定是否显示
+        _REMOTE_ROW = 1  # remote_frame 在 tab_service 内的行号
+
+        def on_mode_change(mode):
+            self.config.set("api.mode", mode)
+            self.config.save_config()
+            if mode == "remote":
+                remote_frame.grid(row=_REMOTE_ROW, column=0, columnspan=2,
+                                  padx=(20, 10), pady=(0, 8), sticky="w")
+            else:
+                remote_frame.grid_forget()
+            self._init_ocr_service()
+            self.log(f"客户端模式已切换为: {mode}")
+
+        ctk.CTkOptionMenu(
+            tab_service, variable=api_mode_var, values=["local", "remote"],
+            command=on_mode_change, width=180
+        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
+
+        # row 1: remote_frame（条件显示）
         if api_mode_var.get() == "remote":
-            remote_frame.grid(row=13, column=0, columnspan=3, padx=40, pady=(0, 10), sticky="ew")
+            remote_frame.grid(row=r, column=0, columnspan=2,
+                              padx=(20, 10), pady=(0, 8), sticky="w")
+        r += 1
 
-        # ========== API 服务器设置 ==========
-        ctk.CTkLabel(settings_win, text="API 服务器", font=("Microsoft YaHei UI", 14)).grid(
-            row=13, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        # API 状态和控制区
-        api_control_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        api_control_frame.grid(row=13, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
-        # 状态标签
+        # ---- API 服务器 ----
+        ctk.CTkLabel(tab_service, text="API 服务器:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        api_control_frame = ctk.CTkFrame(tab_service, fg_color="transparent")
+        api_control_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
         api_running = self.api_server_running
         status_text = f"运行中 (:{self.api_manager.port})" if api_running else "已停止"
         status_color = "green" if api_running else "red"
-        api_status_label = ctk.CTkLabel(
-            api_control_frame,
-            text=status_text,
-            text_color=status_color,
-            font=("Microsoft YaHei UI", 12)
-        )
+        api_status_label = ctk.CTkLabel(api_control_frame, text=status_text,
+                                         text_color=status_color,
+                                         font=("Microsoft YaHei UI", 12))
         api_status_label.pack(side="left", padx=(0, 10))
 
-        # 启动/停止按钮
         def toggle_api_server():
             if self.api_server_running:
                 self.stop_api_server()
@@ -2854,7 +2874,8 @@ class MainWindow(ctk.CTk):
                     port = self.api_manager.port if self.api_manager else "?"
                     api_toggle_btn.configure(text="停止 API", fg_color="#d32f2f")
                     api_status_label.configure(text=f"运行中 (:{port})", text_color="green")
-                    ToastNotification.show(settings_win, f"✓ API 服务器已启动 (:{port})", duration=1500)
+                    ToastNotification.show(settings_win,
+                        f"✓ API 服务器已启动 (:{port})", duration=1500)
                 else:
                     self.config.set("api.enabled", False)
                     self.config.save_config()
@@ -2862,41 +2883,29 @@ class MainWindow(ctk.CTk):
 
         btn_text = "停止 API" if api_running else "启动 API"
         btn_color = "#d32f2f" if api_running else "green"
-        api_toggle_btn = ctk.CTkButton(
-            api_control_frame,
-            text=btn_text,
-            command=toggle_api_server,
-            width=100,
-            height=32,
-            fg_color=btn_color
-        )
+        api_toggle_btn = ctk.CTkButton(api_control_frame, text=btn_text,
+                                        command=toggle_api_server,
+                                        width=90, height=32, fg_color=btn_color)
         api_toggle_btn.pack(side="left", padx=5)
+        r += 1
 
-        # 监听地址 + 端口 (同一行)
-        ctk.CTkLabel(settings_win, text="监听地址:", font=("Microsoft YaHei UI", 12)).grid(
-            row=14, column=0, padx=(40, 10), pady=8, sticky="w"
-        )
-
-        listen_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        listen_frame.grid(row=14, column=1, columnspan=2, padx=10, pady=8, sticky="w")
-
-        listen_host_entry = ctk.CTkEntry(listen_frame, width=150,
-                                          placeholder_text="127.0.0.1")
+        # ---- 监听地址 ----
+        ctk.CTkLabel(tab_service, text="监听地址:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
+        listen_frame = ctk.CTkFrame(tab_service, fg_color="transparent")
+        listen_frame.grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        listen_host_entry = ctk.CTkEntry(listen_frame, width=140, placeholder_text="127.0.0.1")
         listen_host_entry.insert(0, self.config.get("api.host", "127.0.0.1"))
-        listen_host_entry.pack(side="left", padx=(0, 5))
-
+        listen_host_entry.pack(side="left", padx=(0, 4))
         ctk.CTkLabel(listen_frame, text=":", font=("Microsoft YaHei UI", 14)).pack(side="left")
-
-        listen_port_entry = ctk.CTkEntry(listen_frame, width=80, placeholder_text="18000")
+        listen_port_entry = ctk.CTkEntry(listen_frame, width=75, placeholder_text="8000")
         listen_port_entry.insert(0, str(self.config.get("api.port", 8000)))
-        listen_port_entry.pack(side="left", padx=(0, 8))
+        listen_port_entry.pack(side="left", padx=(0, 6))
 
         def confirm_listen_addr():
             import ipaddress
             host = listen_host_entry.get().strip()
             port_str = listen_port_entry.get().strip()
-
-            # 校验 host：只允许 0.0.0.0 / 127.0.0.1 / 有效 IP
             if not host:
                 ToastNotification.show(settings_win, "⚠ 监听地址不能为空", duration=1500)
                 return
@@ -2906,57 +2915,42 @@ class MainWindow(ctk.CTk):
                 except ValueError:
                     ToastNotification.show(settings_win, "⚠ 无效的监听地址", duration=2000)
                     return
-
-            # 0.0.0.0 安全警告
             if host == "0.0.0.0":
-                result = messagebox.askyesno(
-                    "安全警告",
-                    "监听 0.0.0.0 将允许局域网内所有设备访问 API 服务。\n\n是否继续？",
-                    parent=settings_win
-                )
-                if not result:
+                if not messagebox.askyesno(
+                        "安全警告",
+                        "监听 0.0.0.0 将允许局域网内所有设备访问 API 服务。\n\n是否继续？",
+                        parent=settings_win):
                     return
-
-            # 校验端口
             port_valid, port_info = _validate_port(port_str)
             if not port_valid:
                 ToastNotification.show(settings_win, f"⚠ 端口无效: {port_info}", duration=2000)
                 return
-
             port = int(port_str)
             self.config.set("api.host", host)
             self.config.set("api.port", port)
             self.config.save_config()
-            ToastNotification.show(settings_win, f"✓ 监听地址已设置为 {host}:{port}", duration=1500)
+            ToastNotification.show(settings_win,
+                f"✓ 监听地址已设置为 {host}:{port}", duration=1500)
             self.log(f"API 监听地址已设置为: {host}:{port}")
 
         listen_host_entry.bind("<Return>", lambda e: confirm_listen_addr())
         listen_port_entry.bind("<Return>", lambda e: confirm_listen_addr())
+        ctk.CTkButton(listen_frame, text="确认", command=confirm_listen_addr,
+                      width=55, height=28).pack(side="left", padx=4)
+        ctk.CTkLabel(listen_frame, text="(重启API后生效)",
+                     font=("Microsoft YaHei UI", 10), text_color="gray"
+                     ).pack(side="left", padx=4)
+        r += 1
 
-        ctk.CTkButton(
-            listen_frame, text="确认", command=confirm_listen_addr, width=60, height=28
-        ).pack(side="left", padx=5)
-
-        ctk.CTkLabel(
-            listen_frame,
-            text="(重启API后生效)",
-            font=("Microsoft YaHei UI", 10),
-            text_color="gray"
-        ).pack(side="left", padx=5)
-
-        # ========== 启动模式设置 ==========
-        ctk.CTkLabel(settings_win, text="启动模式", font=("Microsoft YaHei UI", 14)).grid(
-            row=15, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
+        # ---- 启动模式 ----
+        ctk.CTkLabel(tab_service, text="启动模式:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
         startup_mode_map = {
             "ui": "纯界面模式",
             "ui+api": "界面 + API 服务",
             "api": "纯 API 服务（无界面）"
         }
         startup_mode_reverse = {v: k for k, v in startup_mode_map.items()}
-
-        # 推断当前模式：兼容旧版本（如果 startup_mode 未设置，检查 api.enabled）
         current_startup = self.config.get("app.startup_mode", "ui")
         if current_startup == "ui" and self.config.get("api.enabled", False):
             current_startup = "ui+api"
@@ -2965,46 +2959,34 @@ class MainWindow(ctk.CTk):
 
         def on_startup_mode_change(choice):
             mode = startup_mode_reverse.get(choice, "ui")
-
-            # 纯 API 模式警告
             if mode == "api":
-                result = messagebox.askyesno(
-                    "警告",
-                    "纯 API 模式下程序启动后没有图形界面，仅提供 API 服务。\n\n"
-                    "如需恢复界面模式，需要手动编辑 config.json\n"
-                    "或使用命令行启动：python main.py（不带参数）\n\n"
-                    "确认切换到纯 API 模式？",
-                    parent=settings_win
-                )
-                if not result:
+                if not messagebox.askyesno(
+                        "警告",
+                        "纯 API 模式下程序启动后没有图形界面，仅提供 API 服务。\n\n"
+                        "如需恢复界面模式，需要手动编辑 config.json\n"
+                        "或使用命令行启动：python main.py（不带参数）\n\n"
+                        "确认切换到纯 API 模式？",
+                        parent=settings_win):
                     startup_mode_var.set(startup_display)
                     return
-
             self.config.set("app.startup_mode", mode)
-            # 同步 api.enabled 保持一致
             self.config.set("api.enabled", mode in ("ui+api", "api"))
             self.config.save_config()
-
-            ToastNotification.show(
-                settings_win, f"✓ 启动模式: {choice}（重启后生效）", duration=2000
-            )
+            ToastNotification.show(settings_win,
+                f"✓ 启动模式: {choice}（重启后生效）", duration=2000)
             self.log(f"启动模式已设置为: {choice}")
 
         ctk.CTkOptionMenu(
-            settings_win,
-            variable=startup_mode_var,
+            tab_service, variable=startup_mode_var,
             values=list(startup_mode_map.values()),
-            command=on_startup_mode_change,
-            width=250,
+            command=on_startup_mode_change, width=220,
             font=("Microsoft YaHei UI", 12)
-        ).grid(row=15, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
+        r += 1
 
-        # ========== 开机自动启动设置 ==========
-        ctk.CTkLabel(settings_win, text="开机自启", font=("Microsoft YaHei UI", 14)).grid(
-            row=16, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        # 读取注册表中的实际状态
+        # ---- 开机自启 ----
+        ctk.CTkLabel(tab_service, text="开机自启:", **_LBL_KW).grid(
+            row=r, column=0, padx=_LBL_PAD, **_RPY, sticky="w")
         from utils.AutoStart import is_auto_start_enabled, set_auto_start
         auto_start_var = ctk.BooleanVar(settings_win, value=is_auto_start_enabled())
 
@@ -3014,71 +2996,31 @@ class MainWindow(ctk.CTk):
             if success:
                 self.config.set("ui.auto_start", enabled)
                 self.config.save_config()
-                # 同步托盘菜单
                 if hasattr(self, 'tray_manager'):
                     self.tray_manager.set_auto_start_status(enabled)
                 status = "启用" if enabled else "禁用"
-                ToastNotification.show(settings_win, f"✓ 开机自动启动已{status}", duration=1500)
+                ToastNotification.show(settings_win,
+                    f"✓ 开机自动启动已{status}", duration=1500)
                 self.log(f"开机自动启动已{status}")
             else:
-                # 设置失败，恢复复选框状态
                 auto_start_var.set(not enabled)
                 ToastNotification.show(settings_win, "✗ 设置失败，请检查权限", duration=2000)
 
-        auto_start_checkbox = ctk.CTkCheckBox(
-            settings_win,
-            text="开机时自动启动（最小化到托盘）",
-            variable=auto_start_var,
-            command=save_auto_start
-        )
-        auto_start_checkbox.grid(row=16, column=1, columnspan=2, padx=10, pady=12, sticky="w")
+        ctk.CTkCheckBox(tab_service, text="开机时自动启动（最小化到托盘）",
+                        variable=auto_start_var, command=save_auto_start
+                        ).grid(row=r, column=1, padx=10, **_RPY, sticky="w")
 
-        # ========== 关闭行为设置 ==========
-        ctk.CTkLabel(settings_win, text="关闭行为", font=("Microsoft YaHei UI", 14)).grid(
-            row=17, column=0, padx=(40, 10), pady=12, sticky="w"
-        )
-
-        close_behavior_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
-        close_behavior_frame.grid(row=17, column=1, columnspan=2, padx=10, pady=12, sticky="w")
-
-        current_choice = self.config.get("ui.minimize_to_tray", None)
-        if current_choice is True:
-            choice_text = "最小化到托盘"
-        elif current_choice is False:
-            choice_text = "直接退出"
-        else:
-            choice_text = "每次询问"
-
-        close_choice_label = ctk.CTkLabel(
-            close_behavior_frame,
-            text=f"当前: {choice_text}",
-            font=("Microsoft YaHei UI", 12)
-        )
-        close_choice_label.pack(side="left", padx=(0, 10))
-
-        def reset_close_behavior():
-            self.config.set("ui.minimize_to_tray", None)
-            self.config.save_config()
-            close_choice_label.configure(text="当前: 每次询问")
-            ToastNotification.show(settings_win, "✓ 已重置，下次关闭时将重新询问", duration=1500)
-            self.log("关闭行为已重置为每次询问")
-
-        ctk.CTkButton(
-            close_behavior_frame,
-            text="重置",
-            command=reset_close_behavior,
-            width=60,
-            height=28
-        ).pack(side="left", padx=5)
-
-        # ========== 关闭按钮 ==========
+        # ============================================================
+        # 关闭按钮
+        # ============================================================
         ctk.CTkButton(
             settings_win,
             text=self.lang.get("close"),
             command=settings_win.destroy,
             width=120,
             height=35
-        ).grid(row=18, column=0, columnspan=3, pady=(25, 20))
+        ).grid(row=1, column=0, pady=(5, 15))
+
 
     def _save_language(self, language, parent_win):
         """保存语言设置
@@ -3128,6 +3070,142 @@ class MainWindow(ctk.CTk):
     def clear_log(self):
         """清空日志"""
         self.log_text.delete("1.0", "end")
+
+    # ==================== 剪贴板监听 ====================
+
+    @staticmethod
+    def _get_image_hash(image) -> str:
+        """计算图片的 MD5 哈希（用于去重，缩小到 64x64 再哈希加速）"""
+        import hashlib
+        thumb = image.copy()
+        thumb.thumbnail((64, 64))
+        return hashlib.md5(thumb.tobytes()).hexdigest()
+
+    def _start_clipboard_monitor(self):
+        """启动剪贴板图片监听后台线程"""
+        if self._clipboard_monitor_active:
+            return
+        self._clipboard_monitor_active = True
+        self._last_clipboard_image_hash = None
+        self._clipboard_monitor_thread = threading.Thread(
+            target=self._clipboard_monitor_loop, daemon=True
+        )
+        self._clipboard_monitor_thread.start()
+        self.log("✓ 剪贴板监听已启动")
+
+    def _stop_clipboard_monitor(self):
+        """停止剪贴板图片监听"""
+        if not self._clipboard_monitor_active:
+            return
+        self._clipboard_monitor_active = False
+        self._clipboard_monitor_thread = None
+        self.log("✓ 剪贴板监听已停止")
+
+    def _clipboard_monitor_loop(self):
+        """剪贴板监听主循环（后台线程，每 1.5 秒轮询一次）"""
+        while self._clipboard_monitor_active:
+            try:
+                if self.model_loaded and not self._clipboard_ocr_running:
+                    image = ClipboardUtils.get_image_from_clipboard()
+                    if image is not None:
+                        img_hash = self._get_image_hash(image)
+                        if img_hash != self._last_clipboard_image_hash:
+                            self._last_clipboard_image_hash = img_hash
+                            self._clipboard_ocr_running = True
+                            threading.Thread(
+                                target=self._do_clipboard_ocr,
+                                args=(image,),
+                                daemon=True
+                            ).start()
+            except Exception as e:
+                print(f"剪贴板监听异常: {e}")
+            time.sleep(1.5)
+
+    def _do_clipboard_ocr(self, image):
+        """后台线程：对剪贴板图片执行 OCR"""
+        try:
+            _, prompt = self._get_prompt_for_current_type()
+            max_tokens = self._get_effective_max_new_tokens()
+            if self.ocr_service is None:
+                self.log("⚠ 剪贴板 OCR：OCR 服务未就绪")
+                return
+            text = self.ocr_service.recognize_image(image, prompt, max_tokens)
+            if text:
+                auto_copy = self.config.get("ui.clipboard_monitor_auto_copy", False)
+                if auto_copy:
+                    ClipboardUtils.set_text_to_clipboard(text)
+                self.after(0, lambda t=text: self._show_clipboard_ocr_result(t))
+            else:
+                self.log("⚠ 剪贴板 OCR：识别结果为空")
+        except Exception as e:
+            self.log(f"✗ 剪贴板 OCR 失败: {e}")
+        finally:
+            self._clipboard_ocr_running = False
+
+    def _show_clipboard_ocr_result(self, text: str):
+        """在屏幕右下角显示剪贴板 OCR 结果弹窗"""
+        popup = ctk.CTkToplevel(self)
+        popup.title("剪贴板识别结果")
+        popup.resizable(True, True)
+        popup.attributes("-topmost", True)
+
+        # 先隐藏，等布局完成再定位
+        popup.withdraw()
+
+        popup.grid_columnconfigure(0, weight=1)
+        popup.grid_rowconfigure(1, weight=1)
+
+        # 标题行
+        title_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        title_frame.grid(row=0, column=0, sticky="ew", padx=15, pady=(12, 4))
+        ctk.CTkLabel(
+            title_frame,
+            text="📋  剪贴板识别结果",
+            font=("Microsoft YaHei UI", 14, "bold")
+        ).pack(side="left")
+
+        # 文本框
+        text_box = ctk.CTkTextbox(
+            popup,
+            font=("Microsoft YaHei UI", 12),
+            wrap="word"
+        )
+        text_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=4)
+        text_box.insert("end", text)
+        text_box.configure(state="disabled")
+
+        # 按钮行
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.grid(row=2, column=0, sticky="w", padx=15, pady=(4, 12))
+
+        def copy_result():
+            ClipboardUtils.set_text_to_clipboard(text)
+            ToastNotification.show(popup, "✓ 已复制到剪贴板", duration=1200)
+
+        ctk.CTkButton(
+            btn_frame, text="复制结果", command=copy_result,
+            width=100, height=32
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="关闭",
+            command=popup.destroy,
+            width=80, height=32,
+            fg_color=("gray70", "gray40")
+        ).pack(side="left")
+
+        # 定位到屏幕右下角
+        popup.update_idletasks()
+        w, h = 480, 320
+        popup.geometry(f"{w}x{h}")
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = screen_w - w - 24
+        y = screen_h - h - 60
+        popup.geometry(f"{w}x{h}+{x}+{y}")
+        popup.deiconify()
+
+        self.log("✓ 剪贴板图片识别完成")
 
 
 if __name__ == "__main__":

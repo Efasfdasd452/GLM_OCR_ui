@@ -33,7 +33,8 @@
     "minimize_to_tray": null,
     "auto_start": true,
     "fix_formula_mode": null,
-    "fix_formula_completion_reminder_disabled": false
+    "fix_formula_completion_reminder_disabled": false,
+    "clipboard_monitor": false
   },
   "api": {
     "enabled": true,

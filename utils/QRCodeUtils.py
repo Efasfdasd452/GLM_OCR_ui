@@ -57,7 +57,8 @@ class QRCodeUtils:
         if not qr_results:
             return ""
 
-        lines = ["[二维码识别结果]"]
+        lines = ["[扫码识别结果]"]
         for i, result in enumerate(qr_results, 1):
-            lines.append(f"二维码 {i}: {result['data']}")
+            label = "二维码" if result['type'] == "QRCODE" else f"条形码({result['type']})"
+            lines.append(f"{label} {i}: {result['data']}")
         return "\n".join(lines)
